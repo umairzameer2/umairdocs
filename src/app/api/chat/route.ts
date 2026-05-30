@@ -14,8 +14,13 @@ const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini'
 const USE_SDK = !AI_API_KEY // Use z-ai-web-dev-sdk when no API key is configured
 
 // In-memory conversation store with TTL for memory management
+type ChatRole = 'system' | 'user' | 'assistant'
+interface ChatMessage {
+  role: ChatRole
+  content: string
+}
 interface ConversationEntry {
-  messages: Array<{ role: string; content: string }>
+  messages: ChatMessage[]
   lastAccessed: number
 }
 const conversations = new Map<string, ConversationEntry>()
@@ -90,7 +95,7 @@ When document context is provided, reference the student's work to give relevant
 
 // ─── SDK-based handler (default, no API key needed) ────────────────
 async function handleWithSDK(
-  messages: Array<{ role: string; content: string }>,
+  messages: ChatMessage[],
   stream: boolean
 ) {
   // Dynamically import z-ai-web-dev-sdk (server-side only)
@@ -142,7 +147,7 @@ async function handleWithSDK(
 
 // ─── OpenAI-compatible API handler (when API key is configured) ───
 async function handleWithOpenAI(
-  messages: Array<{ role: string; content: string }>,
+  messages: ChatMessage[],
   stream: boolean
 ) {
   if (!stream) {
@@ -290,11 +295,11 @@ export async function POST(request: NextRequest) {
 
     if (!entry) {
       entry = {
-        messages: [{ role: 'assistant', content: systemContent }],
+                messages: [{ role: 'system', content: systemContent }],
         lastAccessed: Date.now(),
       }
     } else {
-      entry.messages[0] = { role: 'assistant', content: systemContent }
+            entry.messages[0] = { role: 'system', content: systemContent }
       entry.lastAccessed = Date.now()
     }
 

@@ -69,9 +69,9 @@ export const authOptions: NextAuthOptions = {
             where: { email: user.email },
           })
           if (dbUser) {
-            token.dbUserId = dbUser.id
-            token.dbUserName = dbUser.name
-            token.dbUserAvatar = dbUser.avatar
+                        token.dbUserId = dbUser.id
+            token.dbUserName = dbUser.name ?? undefined
+            token.dbUserAvatar = dbUser.avatar ?? undefined
           }
         } catch {
           // silently fail

@@ -62,8 +62,9 @@ export async function PATCH(
       )
     }
 
-    // Extract _userId before passing data to Prisma (it's not a Document field)
-    const { _userId, ...updateData } = rawData
+        // Extract _userId before passing data to Prisma (it's not a Document field)
+    const _userId = rawData._userId as string | undefined
+    const { _userId: _, ...updateData } = rawData
 
     // Get the old document for change tracking
     const oldDoc = await db.document.findUnique({ where: { id } })
@@ -82,7 +83,7 @@ export async function PATCH(
           action: 'rename',
           description: `Renamed document from "${oldDoc.title}" to "${updateData.title}"`,
           oldValue: oldDoc.title,
-          newValue: updateData.title,
+                    newValue: updateData.title as string,
         })
       }
 
@@ -90,6 +91,8 @@ export async function PATCH(
         changes.push({
           action: 'edit',
           description: `Edited content of "${document.title}"`,
+          oldValue: oldDoc.content,
+          newValue: updateData.content as string,
         })
       }
 
