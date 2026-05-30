@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { Mail, ArrowRight, Loader2, FileText, Sparkles } from 'lucide-react'
+import { Mail, ArrowRight, Loader2, FileText, Sparkles, Github } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { GoogleAccountPicker } from '@/components/auth/google-account-picker'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
@@ -20,8 +20,21 @@ export function AuthPage() {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [googlePickerOpen, setGooglePickerOpen] = useState(false)
-  const [googleLoading, setGoogleLoading] = useState(false)
+    const [googleLoading, setGoogleLoading] = useState(false)
+  const [githubLoading, setGithubLoading] = useState(false)
   const { login, signup, isLoading } = useAppStore()
+
+  const handleGitHubSignIn = async () => {
+    setGithubLoading(true)
+    try {
+      const { signIn } = await import('next-auth/react')
+      await signIn('github', { callbackUrl: '/' })
+    } catch (error) {
+      console.error('GitHub sign in error:', error)
+      toast({ title: 'Error', description: 'Failed to sign in with GitHub', variant: 'destructive' })
+      setGithubLoading(false)
+    }
+  }
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true)
@@ -209,7 +222,28 @@ export function AuthPage() {
                     />
                   </svg>
                 )}
-                Continue with Google
+                                Continue with Google
+              </Button>
+            </motion.div>
+
+            {/* GitHub Sign In */}
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.45 }}
+            >
+              <Button
+                variant="outline"
+                className="w-full h-12 border-border hover:bg-muted hover:border-muted-foreground/30 transition-all duration-200 text-base"
+                onClick={handleGitHubSignIn}
+                disabled={githubLoading}
+              >
+                {githubLoading ? (
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                ) : (
+                  <Github className="w-5 h-5 mr-2" />
+                )}
+                Continue with GitHub
               </Button>
             </motion.div>
 

@@ -1,5 +1,6 @@
 import NextAuth, { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
+import GitHubProvider from 'next-auth/providers/github'
 import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/auth'
 
@@ -9,22 +10,24 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.GOOGLE_CLIENT_ID || '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
     }),
+    GitHubProvider({
+      clientId: process.env.GITHUB_ID || '',
+      clientSecret: process.env.GITHUB_SECRET || '',
+    }),
   ],
   secret: process.env.NEXTAUTH_SECRET || 'umairdocs-secret-key-change-in-production',
   pages: {
-    signIn: '/', // Redirect back to our custom sign-in page
+    signIn: '/',
   },
   callbacks: {
     async signIn({ user, account, profile }) {
-      if (account?.provider === 'google' && user.email) {
+      if ((account?.provider === 'google' || account?.provider === 'github') && user.email) {
         try {
-          // Check if user exists in our database
           let existingUser = await db.user.findUnique({
             where: { email: user.email },
           })
 
           if (!existingUser) {
-            // Create new user with a random password (they authenticate via Google)
             const randomPassword = crypto.randomUUID()
             const hashedPassword = await hashPassword(randomPassword)
 
@@ -33,6 +36,7 @@ export const authOptions: NextAuthOptions = {
                 email: user.email,
                 name: user.name || user.email.split('@')[0],
                 avatar: user.image || null,
+                authProvider: account?.provider || 'email',
                 password: hashedPassword,
                 emails: {
                   create: {
@@ -44,7 +48,6 @@ export const authOptions: NextAuthOptions = {
               },
             })
           } else if (user.image && !existingUser.avatar) {
-            // Update avatar if user doesn't have one
             await db.user.update({
               where: { id: existingUser.id },
               data: { avatar: user.image },
@@ -53,14 +56,13 @@ export const authOptions: NextAuthOptions = {
 
           return true
         } catch (error) {
-          console.error('Google sign-in error:', error)
+          console.error('OAuth sign-in error:', error)
           return false
         }
       }
       return true
     },
     async jwt({ token, user, account }) {
-      // First time sign in - add user ID from our database
       if (user?.email) {
         try {
           const dbUser = await db.user.findUnique({
@@ -78,7 +80,6 @@ export const authOptions: NextAuthOptions = {
       return token
     },
     async session({ session, token }) {
-      // Add our database user info to the session
       if (session.user && token.dbUserId) {
         session.user.id = token.dbUserId as string
         session.user.name = (token.dbUserName as string) || session.user.name || null
@@ -87,7 +88,6 @@ export const authOptions: NextAuthOptions = {
       return session
     },
     async redirect({ url, baseUrl }) {
-      // Redirect to our app's root after sign-in
       if (url.startsWith('/')) return `${baseUrl}${url}`
       if (new URL(url).origin === baseUrl) return url
       return `${baseUrl}?google_auth=success`
@@ -95,7 +95,7 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 30 * 24 * 60 * 60,
   },
   debug: false,
 }
