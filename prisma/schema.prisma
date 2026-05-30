@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -23,6 +23,7 @@ model User {
   emails          EmailAddress[]
   sessions        DeviceSession[]
   invitations     Invitation[]
+  resetTokens     PasswordResetToken[]
 }
 
 model EmailAddress {
@@ -121,4 +122,14 @@ model ChangeTrack {
   createdAt   DateTime @default(now())
   document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

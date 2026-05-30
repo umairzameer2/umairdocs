@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/auth'
+import { sendEmail, welcomeEmailTemplate } from '@/lib/email'
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,6 +47,22 @@ export async function POST(request: NextRequest) {
         },
       },
     })
+
+    // Send welcome email (don't block the response)
+    sendEmail({
+      to: user.email,
+      subject: 'Welcome to UmairDocs! 🎉',
+      html: welcomeEmailTemplate({
+        name: user.name || user.email.split('@')[0],
+        email: user.email,
+        isSignup: true,
+      }).html,
+      text: welcomeEmailTemplate({
+        name: user.name || user.email.split('@')[0],
+        email: user.email,
+        isSignup: true,
+      }).text,
+    }).catch(() => { /* don't block signup if email fails */ })
 
     return NextResponse.json({
       success: true,

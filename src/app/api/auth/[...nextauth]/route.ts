@@ -17,17 +17,19 @@ export const authOptions: NextAuthOptions = {
   ],
   secret: process.env.NEXTAUTH_SECRET || 'umairdocs-secret-key-change-in-production',
   pages: {
-    signIn: '/',
+    signIn: '/', // Redirect back to our custom sign-in page
   },
   callbacks: {
     async signIn({ user, account, profile }) {
       if ((account?.provider === 'google' || account?.provider === 'github') && user.email) {
         try {
+          // Check if user exists in our database
           let existingUser = await db.user.findUnique({
             where: { email: user.email },
           })
 
           if (!existingUser) {
+            // Create new user with a random password (they authenticate via OAuth)
             const randomPassword = crypto.randomUUID()
             const hashedPassword = await hashPassword(randomPassword)
 
@@ -48,6 +50,7 @@ export const authOptions: NextAuthOptions = {
               },
             })
           } else if (user.image && !existingUser.avatar) {
+            // Update avatar if user doesn't have one
             await db.user.update({
               where: { id: existingUser.id },
               data: { avatar: user.image },
@@ -56,20 +59,21 @@ export const authOptions: NextAuthOptions = {
 
           return true
         } catch (error) {
-          console.error('OAuth sign-in error:', error)
+          console.error('Google sign-in error:', error)
           return false
         }
       }
       return true
     },
     async jwt({ token, user, account }) {
+      // First time sign in - add user ID from our database
       if (user?.email) {
         try {
           const dbUser = await db.user.findUnique({
             where: { email: user.email },
           })
           if (dbUser) {
-                        token.dbUserId = dbUser.id
+            token.dbUserId = dbUser.id
             token.dbUserName = dbUser.name ?? undefined
             token.dbUserAvatar = dbUser.avatar ?? undefined
           }
@@ -80,6 +84,7 @@ export const authOptions: NextAuthOptions = {
       return token
     },
     async session({ session, token }) {
+      // Add our database user info to the session
       if (session.user && token.dbUserId) {
         session.user.id = token.dbUserId as string
         session.user.name = (token.dbUserName as string) || session.user.name || null
@@ -88,6 +93,7 @@ export const authOptions: NextAuthOptions = {
       return session
     },
     async redirect({ url, baseUrl }) {
+      // Redirect to our app's root after sign-in
       if (url.startsWith('/')) return `${baseUrl}${url}`
       if (new URL(url).origin === baseUrl) return url
       return `${baseUrl}?google_auth=success`
@@ -95,7 +101,7 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   debug: false,
 }

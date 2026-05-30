@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, Suspense, useMemo } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAppStore } from '@/store/app-store'
 import { Button } from '@/components/ui/button'
@@ -8,21 +9,146 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { Mail, ArrowRight, Loader2, FileText, Sparkles, Github } from 'lucide-react'
+import { Mail, ArrowRight, Loader2, FileText, Sparkles, Github, ArrowLeft, KeyRound, CheckCircle2, Eye, EyeOff, ShieldCheck, ShieldAlert, ShieldX } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
-import { GoogleAccountPicker } from '@/components/auth/google-account-picker'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
 
-export function AuthPage() {
+// ─── Password Strength Utility ────────────────────────────────────
+function getPasswordStrength(password: string): {
+  score: number // 0-4
+  label: string
+  color: string
+  bgColor: string
+  icon: typeof ShieldX
+} {
+  if (!password) return { score: 0, label: '', color: '', bgColor: '', icon: ShieldX }
+
+  let score = 0
+  if (password.length >= 6) score++
+  if (password.length >= 8) score++
+  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++
+  if (/[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) score++
+
+  const levels = [
+    { label: 'Too short', color: 'text-red-500', bgColor: 'bg-red-500', icon: ShieldX },
+    { label: 'Weak', color: 'text-red-500', bgColor: 'bg-red-500', icon: ShieldAlert },
+    { label: 'Fair', color: 'text-amber-500', bgColor: 'bg-amber-500', icon: ShieldAlert },
+    { label: 'Good', color: 'text-blue-500', bgColor: 'bg-blue-500', icon: ShieldCheck },
+    { label: 'Strong', color: 'text-green-500', bgColor: 'bg-green-500', icon: ShieldCheck },
+  ]
+
+  // If password is less than 6, always show "Too short"
+  if (password.length < 6) return levels[0]
+
+  return levels[score] || levels[0]
+}
+
+function PasswordStrengthBar({ password }: { password: string }) {
+  const strength = useMemo(() => getPasswordStrength(password), [password])
+
+  if (!password) return null
+
+  const Icon = strength.icon
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      className="space-y-2"
+    >
+      {/* Strength bars */}
+      <div className="flex gap-1">
+        {[1, 2, 3, 4].map((level) => (
+          <div
+            key={level}
+            className={`h-1.5 flex-1 rounded-full transition-all duration-300 ${
+              level <= strength.score ? strength.bgColor : 'bg-muted'
+            }`}
+          />
+        ))}
+      </div>
+      {/* Strength label */}
+      <div className="flex items-center gap-1.5">
+        <Icon className={`w-3.5 h-3.5 ${strength.color}`} />
+        <span className={`text-xs font-medium ${strength.color}`}>{strength.label}</span>
+      </div>
+    </motion.div>
+  )
+}
+
+function AuthPageContent() {
+  const searchParams = useSearchParams()
   const [isSignUp, setIsSignUp] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
-  const [googlePickerOpen, setGooglePickerOpen] = useState(false)
-    const [googleLoading, setGoogleLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
   const [githubLoading, setGithubLoading] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [forgotLoading, setForgotLoading] = useState(false)
+  const [forgotSent, setForgotSent] = useState(false)
   const { login, signup, isLoading } = useAppStore()
+
+  // Password visibility toggles
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+
+  // Reset password flow
+  const [showResetPassword, setShowResetPassword] = useState(false)
+  const [resetToken, setResetToken] = useState('')
+  const [resetEmail, setResetEmail] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false)
+  const [resetLoading, setResetLoading] = useState(false)
+  const [resetSuccess, setResetSuccess] = useState(false)
+
+  // Check for reset_token in URL on mount
+  useEffect(() => {
+    const token = searchParams.get('reset_token')
+    if (token) {
+      setResetToken(token)
+      // Validate the token
+      fetch(`/api/auth/reset-password?token=${token}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.valid) {
+            setResetEmail(data.email || '')
+            setShowResetPassword(true)
+          } else {
+            toast({
+              title: 'Invalid Link',
+              description: 'This password reset link is invalid or expired. Please request a new one.',
+              variant: 'destructive',
+            })
+          }
+        })
+        .catch(() => {
+          toast({
+            title: 'Error',
+            description: 'Failed to validate reset link',
+            variant: 'destructive',
+          })
+        })
+    }
+  }, [searchParams])
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true)
+    try {
+      const { signIn } = await import('next-auth/react')
+      await signIn('google', { callbackUrl: '/' })
+    } catch (error) {
+      console.error('Google sign in error:', error)
+      toast({ title: 'Error', description: 'Failed to sign in with Google', variant: 'destructive' })
+      setGoogleLoading(false)
+    }
+  }
 
   const handleGitHubSignIn = async () => {
     setGithubLoading(true)
@@ -36,39 +162,32 @@ export function AuthPage() {
     }
   }
 
-  const handleGoogleSignIn = async () => {
-    setGoogleLoading(true)
-    // Show our Google-style account picker directly
-    setGoogleLoading(false)
-    setGooglePickerOpen(true)
-  }
-
-  const handleGoogleSelect = async (googleEmail: string, googleName: string) => {
-    setGoogleLoading(true)
-    try {
-      const { googleLogin } = useAppStore.getState()
-      const success = await googleLogin(googleEmail, googleName)
-      if (success) {
-        setGooglePickerOpen(false)
-        toast({ title: 'Welcome!', description: `Signed in as ${googleEmail}` })
-      } else {
-        toast({ title: 'Google sign-in failed', description: 'Please try again', variant: 'destructive' })
-      }
-    } finally {
-      setGoogleLoading(false)
-    }
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
-    if (!email || !password) {
-      setError('Please fill in all required fields')
+    // Email validation
+    if (!email || !email.includes('@') || !email.includes('.')) {
+      setError('Please enter a valid email address')
+      return
+    }
+
+    if (!password) {
+      setError('Please enter your password')
       return
     }
 
     if (isSignUp) {
+      if (password.length < 6) {
+        setError('Password must be at least 6 characters')
+        return
+      }
+
+      if (password !== confirmPassword) {
+        setError('Passwords do not match')
+        return
+      }
+
       const success = await signup(email, password, name)
       if (!success) {
         setError('An account with this email already exists')
@@ -87,6 +206,388 @@ export function AuthPage() {
     }
   }
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!forgotEmail || !forgotEmail.includes('@')) {
+      toast({ title: 'Invalid email', description: 'Please enter a valid email address', variant: 'destructive' })
+      return
+    }
+
+    setForgotLoading(true)
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail }),
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        setForgotSent(true)
+        toast({
+          title: 'Reset link sent!',
+          description: 'If an account with that email exists, you will receive a password reset link.',
+        })
+      } else {
+        toast({
+          title: 'Error',
+          description: data.error || 'Failed to send reset link',
+          variant: 'destructive',
+        })
+      }
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to send reset link. Please try again.',
+        variant: 'destructive',
+      })
+    } finally {
+      setForgotLoading(false)
+    }
+  }
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    setError('')
+
+    if (!newPassword) {
+      setError('Please enter a new password')
+      return
+    }
+
+    if (newPassword.length < 6) {
+      setError('Password must be at least 6 characters')
+      return
+    }
+
+    if (newPassword !== resetConfirmPassword) {
+      setError('Passwords do not match')
+      return
+    }
+
+    setResetLoading(true)
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: resetToken, newPassword }),
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        setResetSuccess(true)
+        toast({
+          title: 'Password reset!',
+          description: 'Your password has been reset. You can now sign in with your new password.',
+        })
+      } else {
+        toast({
+          title: 'Error',
+          description: data.error || 'Failed to reset password',
+          variant: 'destructive',
+        })
+      }
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to reset password. Please try again.',
+        variant: 'destructive',
+      })
+    } finally {
+      setResetLoading(false)
+    }
+  }
+
+  // ─── Reset Password Modal ──────────────────────────────────────
+  if (showResetPassword) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-muted/50 via-background to-muted relative overflow-hidden">
+        <div className="absolute top-4 right-4 z-20">
+          <ThemeToggle />
+        </div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: 'easeOut' }}
+          className="w-full max-w-md mx-4 relative z-10"
+        >
+          <Card className="shadow-2xl shadow-black/10 border-0 bg-card/80 backdrop-blur-xl">
+            <CardHeader className="space-y-4 pb-4">
+              <div className="flex items-center justify-center">
+                <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-purple-400 rounded-xl flex items-center justify-center shadow-lg shadow-purple-200">
+                  <KeyRound className="w-6 h-6 text-white" />
+                </div>
+              </div>
+              <div className="text-center space-y-1">
+                <h1 className="text-2xl font-semibold text-foreground">
+                  {resetSuccess ? 'Password Reset!' : 'Set New Password'}
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  {resetSuccess
+                    ? 'You can now sign in with your new password'
+                    : resetEmail
+                      ? `Resetting password for ${resetEmail}`
+                      : 'Enter your new password below'}
+                </p>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {resetSuccess ? (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="text-center space-y-4"
+                >
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', delay: 0.2 }}
+                  >
+                    <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto" />
+                  </motion.div>
+                  <p className="text-muted-foreground">
+                    Your password has been successfully reset.
+                  </p>
+                  <Button
+                    className="w-full h-11 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white shadow-lg shadow-purple-200"
+                    onClick={() => {
+                      setShowResetPassword(false)
+                      setResetSuccess(false)
+                      setResetToken('')
+                      setNewPassword('')
+                      setResetConfirmPassword('')
+                    }}
+                  >
+                    Continue to Sign In
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                </motion.div>
+              ) : (
+                <form onSubmit={handleResetPassword} className="space-y-4">
+                  <div>
+                    <Label htmlFor="newPassword" className="text-sm font-medium text-foreground">
+                      New Password
+                    </Label>
+                    <div className="relative mt-1.5">
+                      <Input
+                        id="newPassword"
+                        type={showNewPassword ? 'text' : 'password'}
+                        placeholder="Enter new password (min 6 chars)"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="h-11 pr-10 border-border focus:border-purple-400 focus:ring-purple-400/20 transition-all text-foreground"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <div className="mt-2">
+                      <PasswordStrengthBar password={newPassword} />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="resetConfirmPassword" className="text-sm font-medium text-foreground">
+                      Confirm Password
+                    </Label>
+                    <div className="relative mt-1.5">
+                      <Input
+                        id="resetConfirmPassword"
+                        type={showResetConfirmPassword ? 'text' : 'password'}
+                        placeholder="Confirm your new password"
+                        value={resetConfirmPassword}
+                        onChange={(e) => setResetConfirmPassword(e.target.value)}
+                        className="h-11 pr-10 border-border focus:border-purple-400 focus:ring-purple-400/20 transition-all text-foreground"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowResetConfirmPassword(!showResetConfirmPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {showResetConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {resetConfirmPassword && newPassword !== resetConfirmPassword && (
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="text-xs text-red-500 mt-1.5"
+                      >
+                        Passwords don&apos;t match
+                      </motion.p>
+                    )}
+                  </div>
+                  <AnimatePresence>
+                    {error && (
+                      <motion.p
+                        initial={{ opacity: 0, y: -5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        className="text-sm text-red-500 bg-red-500/10 px-3 py-2 rounded-lg"
+                      >
+                        {error}
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
+                  <Button
+                    type="submit"
+                    className="w-full h-11 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white shadow-lg shadow-purple-200"
+                    disabled={resetLoading || !newPassword || newPassword !== resetConfirmPassword || newPassword.length < 6}
+                  >
+                    {resetLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        Reset Password
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    )}
+                  </Button>
+                </form>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+    )
+  }
+
+  // ─── Forgot Password Modal ─────────────────────────────────────
+  if (showForgotPassword) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-muted/50 via-background to-muted relative overflow-hidden">
+        <div className="absolute top-4 right-4 z-20">
+          <ThemeToggle />
+        </div>
+
+        {/* Background decorations */}
+        <motion.div
+          className="absolute top-20 left-20 w-72 h-72 bg-purple-200/30 rounded-full blur-3xl"
+          animate={{ scale: [1, 1.2, 1], x: [0, 30, 0], y: [0, -20, 0] }}
+          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+        />
+
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: 'easeOut' }}
+          className="w-full max-w-md mx-4 relative z-10"
+        >
+          <Card className="shadow-2xl shadow-black/10 border-0 bg-card/80 backdrop-blur-xl">
+            <CardHeader className="space-y-4 pb-4">
+              <div className="flex items-center justify-center">
+                <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-purple-400 rounded-xl flex items-center justify-center shadow-lg shadow-purple-200">
+                  <KeyRound className="w-6 h-6 text-white" />
+                </div>
+              </div>
+              <div className="text-center space-y-1">
+                <h1 className="text-2xl font-semibold text-foreground">
+                  {forgotSent ? 'Check Your Email' : 'Forgot Password?'}
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  {forgotSent
+                    ? `We sent a reset link to ${forgotEmail}`
+                    : "No worries! Enter your email and we'll send you a reset link."}
+                </p>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {forgotSent ? (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="text-center space-y-4"
+                >
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', delay: 0.2 }}
+                  >
+                    <Mail className="w-16 h-16 text-purple-400 mx-auto" />
+                  </motion.div>
+                  <p className="text-sm text-muted-foreground">
+                    If an account with that email exists, you will receive a password reset link shortly. Check your inbox and spam folder.
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="w-full h-11"
+                    onClick={() => {
+                      setShowForgotPassword(false)
+                      setForgotSent(false)
+                      setForgotEmail('')
+                    }}
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Back to Sign In
+                  </Button>
+                  <button
+                    onClick={() => {
+                      setForgotSent(false)
+                      setForgotLoading(false)
+                    }}
+                    className="text-sm text-purple-600 hover:text-purple-700 font-medium hover:underline transition-colors"
+                  >
+                    Didn&apos;t receive the email? Send again
+                  </button>
+                </motion.div>
+              ) : (
+                <form onSubmit={handleForgotPassword} className="space-y-4">
+                  <div>
+                    <Label htmlFor="forgotEmail" className="text-sm font-medium text-foreground">
+                      Email address
+                    </Label>
+                    <div className="relative mt-1.5">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        id="forgotEmail"
+                        type="email"
+                        placeholder="Enter your email address"
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        className="h-11 pl-10 border-border focus:border-purple-400 focus:ring-purple-400/20 transition-all text-foreground"
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full h-11 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white shadow-lg shadow-purple-200"
+                    disabled={forgotLoading}
+                  >
+                    {forgotLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        Send Reset Link
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    )}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotPassword(false)
+                      setForgotEmail('')
+                    }}
+                    className="flex items-center justify-center w-full text-sm text-purple-600 hover:text-purple-700 font-medium hover:underline transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Back to Sign In
+                  </button>
+                </form>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+    )
+  }
+
+  // ─── Main Auth Page (Sign In / Sign Up) ────────────────────────
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-muted/50 via-background to-muted relative overflow-hidden">
       {/* Theme Toggle - Top Right */}
@@ -222,7 +723,7 @@ export function AuthPage() {
                     />
                   </svg>
                 )}
-                                Continue with Google
+                Continue with Google
               </Button>
             </motion.div>
 
@@ -301,7 +802,7 @@ export function AuthPage() {
                     type="email"
                     placeholder="Enter your email address"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => { setEmail(e.target.value); setError('') }}
                     className="h-11 pl-10 border-border focus:border-purple-400 focus:ring-purple-400/20 transition-all text-foreground"
                   />
                 </div>
@@ -312,18 +813,96 @@ export function AuthPage() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.7 }}
               >
-                <Label htmlFor="password" className="text-sm font-medium text-foreground">
-                  Password
-                </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder={isSignUp ? 'Create a password (min 6 chars)' : 'Enter your password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="mt-1.5 h-11 border-border focus:border-purple-400 focus:ring-purple-400/20 transition-all text-foreground"
-                />
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password" className="text-sm font-medium text-foreground">
+                    Password
+                  </Label>
+                  {!isSignUp && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowForgotPassword(true)
+                        setForgotEmail(email)
+                      }}
+                      className="text-xs text-purple-600 hover:text-purple-700 font-medium hover:underline transition-colors"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <div className="relative mt-1.5">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder={isSignUp ? 'Create a password (min 6 chars)' : 'Enter your password'}
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError('') }}
+                    className="h-11 pr-10 border-border focus:border-purple-400 focus:ring-purple-400/20 transition-all text-foreground"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {/* Password strength bar for signup */}
+                {isSignUp && <div className="mt-2"><PasswordStrengthBar password={password} /></div>}
               </motion.div>
+
+              {/* Confirm password for signup */}
+              <AnimatePresence mode="wait">
+                {isSignUp && (
+                  <motion.div
+                    key="confirm-password-field"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
+                  >
+                    <Label htmlFor="confirmPassword" className="text-sm font-medium text-foreground">
+                      Confirm password
+                    </Label>
+                    <div className="relative mt-1.5">
+                      <Input
+                        id="confirmPassword"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        placeholder="Confirm your password"
+                        value={confirmPassword}
+                        onChange={(e) => { setConfirmPassword(e.target.value); setError('') }}
+                        className="h-11 pr-10 border-border focus:border-purple-400 focus:ring-purple-400/20 transition-all text-foreground"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    {confirmPassword && password !== confirmPassword && (
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="text-xs text-red-500 mt-1.5"
+                      >
+                        Passwords don&apos;t match
+                      </motion.p>
+                    )}
+                    {confirmPassword && password === confirmPassword && confirmPassword.length >= 6 && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="flex items-center gap-1.5 mt-1.5"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                        <span className="text-xs text-green-600">Passwords match</span>
+                      </motion.div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Error message */}
               <AnimatePresence>
@@ -347,7 +926,7 @@ export function AuthPage() {
                 <Button
                   type="submit"
                   className="w-full h-11 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white shadow-lg shadow-purple-200 hover:shadow-purple-300 transition-all duration-200 group"
-                  disabled={isLoading}
+                  disabled={isLoading || (isSignUp && (!confirmPassword || password !== confirmPassword))}
                 >
                   {isLoading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -375,6 +954,7 @@ export function AuthPage() {
                     onClick={() => {
                       setIsSignUp(false)
                       setError('')
+                      setConfirmPassword('')
                     }}
                     className="text-purple-600 hover:text-purple-700 font-medium hover:underline transition-colors"
                   >
@@ -412,14 +992,18 @@ export function AuthPage() {
           </CardContent>
         </Card>
       </motion.div>
-
-      {/* Google Account Picker */}
-      <GoogleAccountPicker
-        open={googlePickerOpen}
-        onClose={() => setGooglePickerOpen(false)}
-        onSelect={handleGoogleSelect}
-        isLoading={googleLoading}
-      />
     </div>
+  )
+}
+
+export function AuthPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-muted/50 via-background to-muted">
+        <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+      </div>
+    }>
+      <AuthPageContent />
+    </Suspense>
   )
 }

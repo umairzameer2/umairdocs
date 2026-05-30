@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { verifyPassword } from '@/lib/auth'
+import { sendEmail, welcomeEmailTemplate } from '@/lib/email'
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,6 +31,22 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       )
     }
+
+    // Send login notification email (don't block the response)
+    sendEmail({
+      to: user.email,
+      subject: 'Sign-in notification — UmairDocs',
+      html: welcomeEmailTemplate({
+        name: user.name || user.email.split('@')[0],
+        email: user.email,
+        isSignup: false,
+      }).html,
+      text: welcomeEmailTemplate({
+        name: user.name || user.email.split('@')[0],
+        email: user.email,
+        isSignup: false,
+      }).text,
+    }).catch(() => { /* don't block login if email fails */ })
 
     return NextResponse.json({
       success: true,
