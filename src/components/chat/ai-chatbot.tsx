@@ -172,9 +172,12 @@ export function AIChatbot() {
     setIsLoading(true)
     setStreamingContent('')
 
-    // Create abort controller for this request
+    // Create abort controller for this request with timeout
     const abortController = new AbortController()
     abortRef.current = abortController
+    const timeoutId = setTimeout(() => {
+      abortController.abort()
+    }, 60000) // 60 second timeout
 
     try {
       const response = await fetch('/api/chat', {
@@ -251,8 +254,15 @@ export function AIChatbot() {
               }
             }
           }
+        } catch (readError) {
+          // If abort due to timeout, use whatever we have
+          if ((readError as Error).name === 'AbortError' && accumulated) {
+            // We have partial content, that's fine
+          } else if ((readError as Error).name !== 'AbortError') {
+            throw readError
+          }
         } finally {
-          reader.releaseLock()
+          try { reader.releaseLock() } catch { /* already released */ }
         }
 
         // Add the completed streaming message
@@ -283,7 +293,25 @@ export function AIChatbot() {
       }
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        // User cancelled, ignore
+        // Timeout or user cancelled
+        if (streamingContent) {
+          // We have partial content, save it
+          const partialMessage: ChatMessage = {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: streamingContent + '\n\n_(Response was cut off due to timeout)_',
+            timestamp: new Date(),
+          }
+          setMessages((prev) => [...prev, partialMessage])
+        } else {
+          const timeoutMessage: ChatMessage = {
+            id: `error-${Date.now()}`,
+            role: 'assistant',
+            content: '⏱️ The response took too long. Please try again.',
+            timestamp: new Date(),
+          }
+          setMessages((prev) => [...prev, timeoutMessage])
+        }
         return
       }
       console.error('Chat error:', error)
@@ -303,6 +331,7 @@ export function AIChatbot() {
         variant: 'destructive',
       })
     } finally {
+      clearTimeout(timeoutId)
       setIsLoading(false)
       setStreamingContent('')
       abortRef.current = null
