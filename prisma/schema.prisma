@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String          @id @default(cuid())
+  email           String          @unique
+  name            String?
+  avatar          String?
+  password        String
+  authProvider    String          @default("email")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  documents       Document[]
+  orgMembers      OrgMember[]
+  changeTracks    ChangeTrack[]
+  createdOrgs     Organization[]  @relation("OrgCreator")
+  emails          EmailAddress[]
+  sessions        DeviceSession[]
+  invitations     Invitation[]
+}
+
+model EmailAddress {
+  id        String   @id @default(cuid())
+  email     String
+  userId    String
+  isPrimary Boolean  @default(false)
+  verified  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([email])
+}
+
+model DeviceSession {
+  id         String   @id @default(cuid())
+  userId     String
+  deviceName String   @default("Unknown Device")
+  deviceType String   @default("desktop")
+  browser    String   @default("Unknown")
+  os         String   @default("Unknown")
+  ipAddress  String   @default("0.0.0.0")
+  location   String   @default("Unknown")
+  lastActive DateTime @default(now())
+  createdAt  DateTime @default(now())
+  isCurrent  Boolean  @default(false)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Document {
+  id             String        @id @default(cuid())
+  title          String
+  content        String        @default("")
+  template       String        @default("blank")
+  icon           String        @default("📄")
+  isStarred      Boolean       @default(false)
+  isTrashed      Boolean       @default(false)
+  authorId       String
+  organizationId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  author         User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  changeTracks   ChangeTrack[]
+}
+
+model Organization {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  description String     @default("")
+  icon        String     @default("🏢")
+  createdBy   String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  creator     User       @relation("OrgCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  members     OrgMember[]
+  documents   Document[]
+  invitations Invitation[]
+}
+
+model OrgMember {
+  id           String       @id @default(cuid())
+  orgId        String
+  userId       String
+  role         String       @default("member")
+  joinedAt     DateTime     @default(now())
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+}
+
+model Invitation {
+  id         String       @id @default(cuid())
+  token      String       @unique
+  email      String
+  orgId      String
+  role       String       @default("member")
+  invitedBy  String
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime     @default(now())
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  inviter    User         @relation(fields: [invitedBy], references: [id], onDelete: Cascade)
+}
+
+model ChangeTrack {
+  id          String   @id @default(cuid())
+  documentId  String
+  userId      String
+  action      String
+  description String
+  oldValue    String?
+  newValue    String?
+  createdAt   DateTime @default(now())
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
