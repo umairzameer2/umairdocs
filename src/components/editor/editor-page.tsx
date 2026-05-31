@@ -89,9 +89,16 @@ import {
   Space,
   Workflow,
   AlertCircle,
+  Crop,
+  Lock,
+  Unlock,
+  Trash2,
+  RefreshCcw,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { AIChatbot } from '@/components/chat/ai-chatbot'
+import Cropper from 'react-easy-crop'
+import type { Area } from 'react-easy-crop'
 
 // Font families available for selection
 const FONT_FAMILIES = [
@@ -163,6 +170,20 @@ export function EditorPage() {
   const [drawSize, setDrawSize] = useState(3)
   const [isEraser, setIsEraser] = useState(false)
   const [fetchedContent, setFetchedContent] = useState<string | null>(null)
+
+  // Image edit dialog state
+  const [imageEditOpen, setImageEditOpen] = useState(false)
+  const [editingImageSrc, setEditingImageSrc] = useState('')
+  const [editingImageElement, setEditingImageElement] = useState<HTMLImageElement | null>(null)
+  const [cropArea, setCropArea] = useState({ x: 0, y: 0 })
+  const [cropZoom, setCropZoom] = useState(1)
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null)
+  const [cropAspect, setCropAspect] = useState<number | undefined>(undefined)
+  const [resizeWidth, setResizeWidth] = useState(0)
+  const [resizeHeight, setResizeHeight] = useState(0)
+  const [resizeLockAspect, setResizeLockAspect] = useState(true)
+  const [imageEditTab, setImageEditTab] = useState<'crop' | 'resize'>('crop')
+  const [originalImageDimensions, setOriginalImageDimensions] = useState({ width: 0, height: 0 })
 
   const editorRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -321,6 +342,35 @@ export function EditorPage() {
     return () => editor.removeEventListener('mousedown', handleMouseDown)
   }, [isReady])
 
+  // Double-click on image opens edit dialog
+  useEffect(() => {
+    if (!isReady || !editorRef.current) return
+    const editor = editorRef.current
+
+    const handleDoubleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      const img = target.closest('.umair-img-wrapper img') as HTMLImageElement | null
+      if (!img) return
+
+      e.preventDefault()
+      setEditingImageElement(img)
+      setEditingImageSrc(img.src)
+      setResizeWidth(img.naturalWidth)
+      setResizeHeight(img.naturalHeight)
+      setOriginalImageDimensions({ width: img.naturalWidth, height: img.naturalHeight })
+      setCropArea({ x: 0, y: 0 })
+      setCropZoom(1)
+      setCroppedAreaPixels(null)
+      setCropAspect(undefined)
+      setImageEditTab('crop')
+      setResizeLockAspect(true)
+      setImageEditOpen(true)
+    }
+
+    editor.addEventListener('dblclick', handleDoubleClick)
+    return () => editor.removeEventListener('dblclick', handleDoubleClick)
+  }, [isReady])
+
   // Fetch documents list if not yet loaded (for sidebar/metadata)
   useEffect(() => {
     if (activeDocumentId && !activeDocument) {
@@ -461,7 +511,7 @@ export function EditorPage() {
     const escapedSrc = src.replace(/"/g, '&quot;')
     const imgHTML = `<div class="umair-img-wrapper" contenteditable="false" style="position: relative; display: inline-block; margin: 8px 0; max-width: 100%; cursor: move;"><img src="${escapedSrc}" style="max-width: 100%; height: auto; border-radius: 8px; display: block;" /><div class="umair-img-resize-handle" style="position: absolute; bottom: -4px; right: -4px; width: 12px; height: 12px; background: #7c3aed; border-radius: 2px; cursor: nwse-resize;"></div></div>`
     insertHTMLAtCursor(imgHTML)
-    toast({ title: 'Image added', description: 'Drag to move, drag corner to resize' })
+    toast({ title: 'Image added', description: 'Drag to move, double-click to crop/edit' })
   }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -521,6 +571,137 @@ export function EditorPage() {
   const handleImageUrl = () => {
     const url = prompt('Enter image URL:')
     if (url) handleInsertImage(url)
+  }
+
+  // ─── Image Crop ──────────────────────────────────────────────
+  const onCropComplete = useCallback((_croppedArea: Area, croppedAreaPx: Area) => {
+    setCroppedAreaPixels(croppedAreaPx)
+  }, [])
+
+  const applyCrop = useCallback(async () => {
+    if (!editingImageElement || !croppedAreaPixels) return
+
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = editingImageSrc
+
+    await new Promise<void>(resolve => { img.onload = () => resolve() })
+
+    const canvas = document.createElement('canvas')
+    canvas.width = croppedAreaPixels.width
+    canvas.height = croppedAreaPixels.height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    ctx.drawImage(
+      img,
+      croppedAreaPixels.x, croppedAreaPixels.y,
+      croppedAreaPixels.width, croppedAreaPixels.height,
+      0, 0,
+      croppedAreaPixels.width, croppedAreaPixels.height
+    )
+
+    const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9)
+    editingImageElement.src = croppedDataUrl
+    handleContentChange()
+    setImageEditOpen(false)
+    toast({ title: 'Image cropped', description: 'Crop applied successfully' })
+  }, [editingImageElement, croppedAreaPixels, editingImageSrc])
+
+  // ─── Image Resize ────────────────────────────────────────────
+  const applyResize = useCallback(() => {
+    if (!editingImageElement || resizeWidth <= 0 || resizeHeight <= 0) return
+
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = editingImageSrc
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = resizeWidth
+      canvas.height = resizeHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      ctx.drawImage(img, 0, 0, resizeWidth, resizeHeight)
+      const resizedDataUrl = canvas.toDataURL('image/jpeg', 0.9)
+
+      editingImageElement.src = resizedDataUrl
+      editingImageElement.style.width = resizeWidth + 'px'
+      editingImageElement.style.height = resizeHeight + 'px'
+      handleContentChange()
+      setImageEditOpen(false)
+      toast({ title: 'Image resized', description: 'Resize applied successfully' })
+    }
+  }, [editingImageElement, resizeWidth, resizeHeight, editingImageSrc])
+
+  const handleResizeWidthChange = (newWidth: number) => {
+    setResizeWidth(newWidth)
+    if (resizeLockAspect && originalImageDimensions.width > 0) {
+      setResizeHeight(Math.round((newWidth / originalImageDimensions.width) * originalImageDimensions.height))
+    }
+  }
+
+  const handleResizeHeightChange = (newHeight: number) => {
+    setResizeHeight(newHeight)
+    if (resizeLockAspect && originalImageDimensions.height > 0) {
+      setResizeWidth(Math.round((newHeight / originalImageDimensions.height) * originalImageDimensions.width))
+    }
+  }
+
+  const handleReplaceImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !editingImageElement) return
+    if (!file.type.startsWith('image/')) {
+      toast({ title: 'Invalid file', description: 'Please select an image file', variant: 'destructive' })
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string
+      if (!dataUrl) return
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(img, 0, 0)
+          const compressed = canvas.toDataURL('image/jpeg', 0.8)
+          editingImageElement.src = compressed
+          handleContentChange()
+          setEditingImageSrc(compressed)
+          setResizeWidth(img.width)
+          setResizeHeight(img.height)
+          setOriginalImageDimensions({ width: img.width, height: img.height })
+          toast({ title: 'Image replaced', description: 'New image applied' })
+        }
+      }
+      img.src = dataUrl
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
+  const handleDeleteImage = () => {
+    if (!editingImageElement) return
+    const wrapper = editingImageElement.closest('.umair-img-wrapper')
+    if (wrapper) {
+      wrapper.remove()
+    } else {
+      editingImageElement.remove()
+    }
+    handleContentChange()
+    setImageEditOpen(false)
+    toast({ title: 'Image deleted', description: 'Image removed from document' })
+  }
+
+  const applyResizePreset = (percent: number) => {
+    const newW = Math.round(originalImageDimensions.width * (percent / 100))
+    const newH = Math.round(originalImageDimensions.height * (percent / 100))
+    setResizeWidth(newW)
+    setResizeHeight(newH)
   }
 
   // Table insertion
@@ -1277,6 +1458,166 @@ export function EditorPage() {
           </div>
         </div>
       </motion.footer>
+
+      {/* Image Edit Dialog */}
+      <Dialog open={imageEditOpen} onOpenChange={(open) => { if (!open) setImageEditOpen(false) }}>
+        <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Crop className="w-5 h-5 text-purple-600" />
+              Edit Image
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Tab Switcher */}
+          <div className="flex gap-2 border-b border-border pb-2">
+            <button
+              className={`px-4 py-1.5 text-sm font-medium rounded-t-lg transition-colors ${imageEditTab === 'crop' ? 'bg-purple-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setImageEditTab('crop')}
+            >
+              <Crop className="w-4 h-4 inline mr-1" /> Crop
+            </button>
+            <button
+              className={`px-4 py-1.5 text-sm font-medium rounded-t-lg transition-colors ${imageEditTab === 'resize' ? 'bg-purple-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setImageEditTab('resize')}
+            >
+              <RefreshCcw className="w-4 h-4 inline mr-1" /> Resize
+            </button>
+          </div>
+
+          {imageEditTab === 'crop' ? (
+            <div className="space-y-3">
+              {/* Cropper */}
+              <div className="relative w-full h-[300px] bg-black rounded-lg overflow-hidden">
+                <Cropper
+                  image={editingImageSrc}
+                  crop={cropArea}
+                  zoom={cropZoom}
+                  aspect={cropAspect}
+                  onCropChange={setCropArea}
+                  onZoomChange={setCropZoom}
+                  onCropComplete={onCropComplete}
+                />
+              </div>
+
+              {/* Zoom Slider */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground w-10">Zoom</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.1}
+                  value={cropZoom}
+                  onChange={(e) => setCropZoom(Number(e.target.value))}
+                  className="flex-1 accent-purple-600"
+                />
+                <span className="text-xs text-muted-foreground w-8">{cropZoom.toFixed(1)}x</span>
+              </div>
+
+              {/* Aspect Ratio Presets */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Ratio:</span>
+                {[
+                  { label: 'Free', value: undefined },
+                  { label: '1:1', value: 1 },
+                  { label: '4:3', value: 4 / 3 },
+                  { label: '16:9', value: 16 / 9 },
+                  { label: '3:2', value: 3 / 2 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    onClick={() => setCropAspect(preset.value)}
+                    className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${cropAspect === preset.value ? 'border-purple-500 bg-purple-500/10 text-purple-600' : 'border-border hover:border-purple-300'}`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <Button className="w-full" onClick={applyCrop} disabled={!croppedAreaPixels}>
+                <Crop className="w-4 h-4 mr-1" /> Apply Crop
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Width / Height */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-muted-foreground">Width (px)</label>
+                  <Input
+                    type="number"
+                    value={resizeWidth}
+                    onChange={(e) => handleResizeWidthChange(Number(e.target.value))}
+                    min={1}
+                    className="h-8"
+                  />
+                </div>
+                <button
+                  onClick={() => setResizeLockAspect(!resizeLockAspect)}
+                  className="mt-5 p-1.5 rounded-md hover:bg-muted transition-colors"
+                  title={resizeLockAspect ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+                >
+                  {resizeLockAspect ? <Lock className="w-4 h-4 text-purple-600" /> : <Unlock className="w-4 h-4 text-muted-foreground" />}
+                </button>
+                <div className="flex-1">
+                  <label className="text-xs text-muted-foreground">Height (px)</label>
+                  <Input
+                    type="number"
+                    value={resizeHeight}
+                    onChange={(e) => handleResizeHeightChange(Number(e.target.value))}
+                    min={1}
+                    className="h-8"
+                  />
+                </div>
+              </div>
+
+              {/* Percentage Presets */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Presets:</span>
+                {[
+                  { label: '25%', value: 25 },
+                  { label: '50%', value: 50 },
+                  { label: '75%', value: 75 },
+                  { label: '100%', value: 100 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    onClick={() => applyResizePreset(preset.value)}
+                    className="px-2.5 py-1 text-xs rounded-md border border-border hover:border-purple-300 hover:bg-purple-500/10 transition-colors"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <p className="text-[11px] text-muted-foreground">
+                Original: {originalImageDimensions.width} × {originalImageDimensions.height} → New: {resizeWidth} × {resizeHeight}
+              </p>
+
+              <Button className="w-full" onClick={applyResize} disabled={resizeWidth <= 0 || resizeHeight <= 0}>
+                <RefreshCcw className="w-4 h-4 mr-1" /> Apply Resize
+              </Button>
+            </div>
+          )}
+
+          {/* Bottom actions */}
+          <div className="flex items-center justify-between border-t border-border pt-3 mt-2">
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border hover:bg-muted cursor-pointer text-xs transition-colors">
+                <ImagePlus className="w-3.5 h-3.5" /> Replace
+                <input type="file" accept="image/*" className="hidden" onChange={handleReplaceImage} />
+              </label>
+              <Button variant="outline" size="sm" className="text-xs text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleDeleteImage}>
+                <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
+              </Button>
+            </div>
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => setImageEditOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

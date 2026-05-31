@@ -14,13 +14,8 @@ const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini'
 const USE_SDK = !AI_API_KEY // Use z-ai-web-dev-sdk when no API key is configured
 
 // In-memory conversation store with TTL for memory management
-type ChatRole = 'system' | 'user' | 'assistant'
-interface ChatMessage {
-  role: ChatRole
-  content: string
-}
 interface ConversationEntry {
-  messages: ChatMessage[]
+  messages: Array<{ role: string; content: string }>
   lastAccessed: number
 }
 const conversations = new Map<string, ConversationEntry>()
@@ -49,34 +44,21 @@ if (typeof setInterval !== 'undefined') {
   setInterval(cleanupConversations, 5 * 60 * 1000)
 }
 
-const SYSTEM_PROMPT = `You are UmairDocs AI Assistant — a friendly, warm, and knowledgeable academic assistant built into the UmairDocs document platform. Your role is to help students with their questions across all subjects.
+const SYSTEM_PROMPT = `You are UmairDocs AI Assistant — a friendly, knowledgeable academic assistant built into the UmairDocs document platform. Your role is to help students with their questions across all subjects.
 
 ## Core Identity
 - You are an AI-powered academic assistant embedded in a document editor
 - You help students learn, understand, and produce better academic work
 - You are accurate, reliable, and always cite your reasoning
-- You are WARM and FRIENDLY — never robotic or cold
-
-## Greeting Rules (VERY IMPORTANT)
-- When a user greets you (hi, hello, hey, good morning, etc.), ALWAYS respond warmly and enthusiastically
-- Use friendly language like "Hey there! 👋", "Hello! 😊", "Hi! Great to see you!"
-- Add a relevant emoji to greeting responses
-- After greeting, briefly mention how you can help them today
-- NEVER respond to greetings with just "Hello." or "Hi." — always add warmth and offer help
-- Examples of good greeting responses:
-  - "Hey there! 👋 So glad you're here! I'm your UmairDocs AI Assistant. How can I help you today? Whether it's studying, homework, or writing — I'm ready! 😊"
-  - "Hello! 😊 Welcome back! What would you like to work on today? I can help with any subject! 🎓"
-  - "Hi! 👋 Great to chat with you! Feel free to ask me anything — from math problems to essay writing! ✨"
 
 ## Response Guidelines
-1. **Warm & Friendly**: Always start with a positive, encouraging tone. Use emojis occasionally (not excessively).
-2. **Accuracy First**: Always provide factually correct information. If you're unsure, say so rather than guessing.
-3. **Clear Structure**: Use Markdown formatting (headers, bullet points, numbered lists, code blocks) to make responses easy to read.
-4. **Step-by-Step**: Break down complex topics into sequential, understandable steps.
-5. **Examples & Analogies**: Use concrete examples and relatable analogies to illustrate concepts.
-6. **Encouraging Tone**: Be supportive and positive. Celebrate good questions and learning progress.
-7. **Concise by Default**: Keep answers focused and to the point. Offer to elaborate if the student wants more detail.
-8. **Ask for Clarification**: If a question is ambiguous, ask the student to clarify before answering.
+1. **Accuracy First**: Always provide factually correct information. If you're unsure, say so rather than guessing.
+2. **Clear Structure**: Use Markdown formatting (headers, bullet points, numbered lists, code blocks) to make responses easy to read.
+3. **Step-by-Step**: Break down complex topics into sequential, understandable steps.
+4. **Examples & Analogies**: Use concrete examples and relatable analogies to illustrate concepts.
+5. **Encouraging Tone**: Be supportive and positive. Celebrate good questions and learning progress.
+6. **Concise by Default**: Keep answers focused and to the point. Offer to elaborate if the student wants more detail.
+7. **Ask for Clarification**: If a question is ambiguous, ask the student to clarify before answering.
 
 ## Academic Integrity
 - Help students understand concepts and learn, NOT cheat on assignments
@@ -93,36 +75,104 @@ When document context is provided, reference the student's work to give relevant
 - Use **bold** for emphasis on key terms
 - Keep paragraphs short (2-3 sentences max)`
 
+// ─── Cached ZAI instance ──────────────────────────────────────────
+// Create the SDK instance once and reuse it across requests.
+let zaiInstance: Awaited<ReturnType<typeof import('z-ai-web-dev-sdk').default>> | null = null
+let zaiInitPromise: Promise<typeof zaiInstance> | null = null
+
+async function getZAIInstance() {
+  if (zaiInstance) return zaiInstance
+  if (zaiInitPromise) return zaiInitPromise
+
+  zaiInitPromise = (async () => {
+    try {
+      const ZAI = (await import('z-ai-web-dev-sdk')).default
+      const instance = await ZAI.create()
+      zaiInstance = instance
+      return instance
+    } catch (err) {
+      console.error('Failed to initialize z-ai-web-dev-sdk:', err)
+      zaiInitPromise = null // Allow retry on next request
+      throw new Error('SDK initialization failed')
+    }
+  })()
+
+  return zaiInitPromise
+}
+
+// ─── Timeout wrapper ──────────────────────────────────────────────
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val) },
+      (err) => { clearTimeout(timer); reject(err) }
+    )
+  })
+}
+
+// ─── Retry with exponential backoff ───────────────────────────────
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, baseDelay = 1000): Promise<T> {
+  let lastError: unknown = null
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt)
+        console.warn(`Retry ${attempt + 1}/${maxRetries} after ${delay}ms:`, err instanceof Error ? err.message : err)
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+  }
+  throw lastError
+}
+
 // ─── SDK-based handler (default, no API key needed) ────────────────
 async function handleWithSDK(
-  messages: ChatMessage[],
+  messages: Array<{ role: string; content: string }>,
   stream: boolean
 ) {
-  // Dynamically import z-ai-web-dev-sdk (server-side only)
-  const ZAI = (await import('z-ai-web-dev-sdk')).default
-  const zai = await ZAI.create()
+  const zai = await getZAIInstance()
+
+  // Convert messages: the z-ai-web-dev-sdk uses 'assistant' role for system prompts
+  const sdkMessages = messages.map(m => ({
+    role: (m.role === 'system' ? 'assistant' : m.role) as 'assistant' | 'user',
+    content: m.content,
+  }))
+
+  async function createCompletion() {
+    return withRetry(
+      () => withTimeout(
+        zai.chat.completions.create({
+          messages: sdkMessages,
+          thinking: { type: 'disabled' },
+        }),
+        45_000,
+        'SDK chat completion'
+      ),
+      2,
+      1000
+    )
+  }
 
   if (!stream) {
-    const completion = await zai.chat.completions.create({
-      messages,
-      thinking: { type: 'disabled' },
-    })
+    const completion = await createCompletion()
     const response = completion.choices?.[0]?.message?.content || ''
     return { type: 'json' as const, response }
   }
 
-  // SDK streaming - we'll collect the response and stream it as SSE
-  const completion = await zai.chat.completions.create({
-    messages,
-    thinking: { type: 'disabled' },
-  })
+  // SDK streaming — the SDK doesn't support true streaming, so we fetch
+  // the full response then emulate SSE with chunked delivery.
+  const completion = await createCompletion()
   const fullContent = completion.choices?.[0]?.message?.content || ''
 
-  // Create SSE stream from the full response (SDK doesn't support true streaming,
-  // so we send the complete response in chunks for a streaming-like experience)
   const encoder = new TextEncoder()
-  const chunkSize = 20 // characters per chunk
+  const FIRST_CHUNK_SIZE = 80 // bigger initial chunk for instant feedback
+  const CHUNK_SIZE = 20
   let offset = 0
+  let isFirstChunk = true
 
   const stream$ = new ReadableStream({
     async pull(controller) {
@@ -132,13 +182,13 @@ async function handleWithSDK(
         return
       }
 
-      const chunk = fullContent.slice(offset, offset + chunkSize)
-      offset += chunkSize
+      const size = isFirstChunk ? FIRST_CHUNK_SIZE : CHUNK_SIZE
+      isFirstChunk = false
+      const chunk = fullContent.slice(offset, offset + size)
+      offset += size
 
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`))
-
-      // Small delay for streaming effect
-      await new Promise((r) => setTimeout(r, 30))
+      await new Promise((r) => setTimeout(r, 25))
     },
   })
 
@@ -147,7 +197,7 @@ async function handleWithSDK(
 
 // ─── OpenAI-compatible API handler (when API key is configured) ───
 async function handleWithOpenAI(
-  messages: ChatMessage[],
+  messages: Array<{ role: string; content: string }>,
   stream: boolean
 ) {
   if (!stream) {
@@ -214,7 +264,6 @@ async function handleWithOpenAI(
         const { done, value } = await reader.read()
 
         if (done) {
-          // Process remaining buffer
           if (sseBuffer.trim()) {
             const remaining = sseBuffer.trim()
             if (remaining.startsWith('data: ')) {
@@ -295,11 +344,11 @@ export async function POST(request: NextRequest) {
 
     if (!entry) {
       entry = {
-                messages: [{ role: 'system', content: systemContent }],
+        messages: [{ role: 'assistant', content: systemContent }],
         lastAccessed: Date.now(),
       }
     } else {
-            entry.messages[0] = { role: 'system', content: systemContent }
+      entry.messages[0] = { role: 'assistant', content: systemContent }
       entry.lastAccessed = Date.now()
     }
 
@@ -327,7 +376,6 @@ export async function POST(request: NextRequest) {
     }
 
     if (result.type === 'json') {
-      // Non-streaming: return JSON response
       entry.messages.push({ role: 'assistant', content: result.response })
       entry.lastAccessed = Date.now()
       conversations.set(sessionKey, entry)
@@ -343,64 +391,66 @@ export async function POST(request: NextRequest) {
     const entryRef = entry
     const sessionKeyRef = sessionKey
     const capturedContent = result.content
-
-    // For OpenAI streaming, we track fullContent inside the stream handler
-    // For SDK streaming, we already have the full content
     let fullStreamedContent = USE_SDK ? capturedContent : ''
 
     const originalStream = result.stream
-    const encoder = new TextEncoder()
-
-    // Get reader ONCE outside the stream to avoid "ReadableStream is locked" errors
     const originalReader = originalStream.getReader()
 
     const wrappedStream = new ReadableStream({
       async pull(controller) {
         try {
-          while (true) {
-            const { done, value } = await originalReader.read()
-            if (done) {
-              // Save the conversation
-              const contentToSave = USE_SDK ? capturedContent : fullStreamedContent
-              if (contentToSave) {
-                entryRef.messages.push({ role: 'assistant', content: contentToSave })
-                entryRef.lastAccessed = Date.now()
-                conversations.set(sessionKeyRef, entryRef)
-              }
-              controller.close()
-              return
+          const { done, value } = await originalReader.read()
+          if (done) {
+            const contentToSave = USE_SDK ? capturedContent : fullStreamedContent
+            if (contentToSave) {
+              entryRef.messages.push({ role: 'assistant', content: contentToSave })
+              entryRef.lastAccessed = Date.now()
+              conversations.set(sessionKeyRef, entryRef)
             }
-
-            // Track content for OpenAI streaming
-            if (!USE_SDK) {
-              const text = new TextDecoder().decode(value)
-              const match = text.match(/data: (\{.*\})\n\n/)
-              if (match) {
-                try {
-                  const parsed = JSON.parse(match[1])
-                  if (parsed.content) {
-                    fullStreamedContent += parsed.content
-                  }
-                } catch { /* ignore */ }
-              }
-            }
-
-            controller.enqueue(value)
+            controller.close()
+            return
           }
+
+          if (!USE_SDK) {
+            const text = new TextDecoder().decode(value)
+            // Parse all content chunks in this value (may contain multiple data: lines)
+            const lines = text.split('\n')
+            for (const line of lines) {
+              const trimmed = line.trim()
+              if (!trimmed.startsWith('data: ')) continue
+              const data = trimmed.slice(6).trim()
+              if (!data || data === '[DONE]') continue
+              try {
+                const parsed = JSON.parse(data)
+                if (parsed.content) {
+                  fullStreamedContent += parsed.content
+                }
+              } catch { /* ignore */ }
+            }
+          }
+
+          controller.enqueue(value)
         } catch (err) {
           console.error('Wrapped stream error:', err)
-          controller.close()
-        } finally {
-          try { originalReader.releaseLock() } catch { /* already released */ }
+          // Still try to save whatever we have
+          const contentToSave = USE_SDK ? capturedContent : fullStreamedContent
+          if (contentToSave) {
+            entryRef.messages.push({ role: 'assistant', content: contentToSave })
+            entryRef.lastAccessed = Date.now()
+            conversations.set(sessionKeyRef, entryRef)
+          }
+          try { controller.close() } catch { /* already closed */ }
         }
+      },
+      cancel() {
+        try { originalReader.cancel() } catch { /* ignore */ }
       },
     })
 
     return new Response(wrappedStream, {
       headers: {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
+        'Cache-Control': 'no-cache, no-transform',
       },
     })
   } catch (error) {

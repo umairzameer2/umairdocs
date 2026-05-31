@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/auth'
+import { sendEmail, welcomeEmailTemplate } from '@/lib/email'
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,6 +50,15 @@ export async function POST(request: NextRequest) {
           },
         },
       },
+    })
+
+    // Send welcome email to new Google users (non-blocking)
+    const { html, text } = welcomeEmailTemplate({
+      name: user.name || '',
+      email: user.email,
+    })
+    sendEmail({ to: user.email, subject: 'Welcome to UmairDocs! 🎉', html, text }).catch((err) => {
+      console.error('Failed to send welcome email:', err)
     })
 
     return NextResponse.json({

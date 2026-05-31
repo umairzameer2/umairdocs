@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { signOut } from 'next-auth/react'
 import { useAppStore } from '@/store/app-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -1130,8 +1131,9 @@ export function HomePage() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     className="cursor-pointer py-2 text-red-600 focus:text-red-600 focus:bg-red-50"
-                    onClick={() => {
+                    onClick={async () => {
                       logout()
+                      await signOut({ redirect: false })
                       toast({ title: 'Signed out', description: 'You have been signed out successfully' })
                     }}
                   >

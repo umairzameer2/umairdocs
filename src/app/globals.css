@@ -289,6 +289,119 @@
   border-color: oklch(0.35 0 0);
 }
 
+/* ─── Print Styles ─────────────────────────────────────────────────── */
+@media print {
+  /* Reset body for print */
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    overflow: visible !important;
+  }
+
+  /* Hide everything first */
+  body > * {
+    display: none !important;
+  }
+
+  /* Show the root div that contains the editor */
+  body > div:first-child {
+    display: flex !important;
+  }
+
+  /* Hide everything inside the root div except the editor area */
+  body > div:first-child > * {
+    display: none !important;
+  }
+
+  /* Show the editor content wrapper */
+  body > div:first-child > .flex-1 {
+    display: block !important;
+  }
+
+  /* Hide everything inside the content wrapper except the max-w-4xl container */
+  body > div:first-child > .flex-1 > * {
+    display: none !important;
+  }
+
+  /* Show the max-w-4xl container */
+  body > div:first-child > .flex-1 > .max-w-4xl {
+    display: block !important;
+  }
+
+  /* The editor content area */
+  [contenteditable] {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    color: black !important;
+    font-size: 12pt !important;
+    line-height: 1.5 !important;
+    overflow: visible !important;
+    transform: none !important;
+  }
+
+  [contenteditable] * {
+    visibility: visible !important;
+  }
+
+  /* Hide resize handles on images */
+  .umair-img-resize-handle {
+    display: none !important;
+  }
+
+  /* Remove purple border on image wrappers */
+  .umair-img-wrapper {
+    border: none !important;
+    box-shadow: none !important;
+    transform: none !important;
+    cursor: default !important;
+  }
+
+  /* Images print nicely */
+  [contenteditable] img {
+    max-width: 100% !important;
+    height: auto !important;
+    page-break-inside: avoid;
+  }
+
+  [contenteditable] table {
+    page-break-inside: avoid;
+  }
+
+  [contenteditable] p,
+  [contenteditable] h1,
+  [contenteditable] h2,
+  [contenteditable] h3,
+  [contenteditable] li,
+  [contenteditable] blockquote {
+    page-break-inside: avoid;
+  }
+
+  /* Remove card styling in print */
+  .py-8.px-4 > .max-w-4xl > div {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    background: white !important;
+    padding: 0 !important;
+    min-height: auto !important;
+  }
+
+  /* Dark mode forced white in print */
+  .dark [contenteditable],
+  .dark [contenteditable] * {
+    color: black !important;
+    background: white !important;
+  }
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAppStore } from '@/store/app-store'
 import { AuthPage } from '@/components/auth/auth-page'
@@ -28,6 +28,11 @@ function getInvitationTokenFromURL(): string | null {
 export default function UmairDocsApp() {
   const { currentView, isAuthenticated, verifySession, fetchPendingInvitations } = useAppStore()
   const [invitationToken, setInvitationToken] = useState(() => getInvitationTokenFromURL())
+
+  // NOTE: useSession() is NO LONGER used here.
+  // Session syncing is handled by <SessionSync /> inside AuthProvider,
+  // which is guaranteed to be inside <SessionProvider>.
+  // This prevents the "useSession must be wrapped in a SessionProvider" error.
 
   // Verify user session on mount (detect stale/deleted users)
   useEffect(() => {

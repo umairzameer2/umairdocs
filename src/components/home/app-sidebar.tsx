@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { signOut } from 'next-auth/react'
 import { useAppStore } from '@/store/app-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -280,8 +281,11 @@ export function AppSidebar() {
     [updateOrgMemberRole, fetchOrganizations],
   )
 
-  const handleSignOut = useCallback(() => {
+  const handleSignOut = useCallback(async () => {
     logout()
+    // Also call NextAuth signOut to properly destroy the httpOnly session cookie
+    // Without this, the session cookie survives and SessionSync re-authenticates
+    await signOut({ redirect: false })
     toast({ title: 'Signed out', description: 'You have been signed out successfully' })
   }, [logout])
 

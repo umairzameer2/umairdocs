@@ -48,21 +48,14 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Send welcome email (don't block the response)
-    sendEmail({
-      to: user.email,
-      subject: 'Welcome to UmairDocs! 🎉',
-      html: welcomeEmailTemplate({
-        name: user.name || user.email.split('@')[0],
-        email: user.email,
-        isSignup: true,
-      }).html,
-      text: welcomeEmailTemplate({
-        name: user.name || user.email.split('@')[0],
-        email: user.email,
-        isSignup: true,
-      }).text,
-    }).catch(() => { /* don't block signup if email fails */ })
+    // Send welcome email (non-blocking)
+    const { html, text } = welcomeEmailTemplate({
+      name: user.name || '',
+      email: user.email,
+    })
+    sendEmail({ to: user.email, subject: 'Welcome to UmairDocs! 🎉', html, text }).catch((err) => {
+      console.error('Failed to send welcome email:', err)
+    })
 
     return NextResponse.json({
       success: true,

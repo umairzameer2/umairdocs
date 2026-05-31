@@ -150,11 +150,14 @@ export function AIChatbot() {
     scrollToBottom()
   }, [messages, streamingContent, scrollToBottom])
 
+  // Auto-focus input when chat opens, un-minimizes, or AI finishes responding
   useEffect(() => {
-    if (isOpen && !isMinimized && inputRef.current) {
-      inputRef.current.focus()
+    if (isOpen && !isMinimized && !isLoading && inputRef.current) {
+      // Small delay to ensure DOM is ready after state updates
+      const timer = setTimeout(() => inputRef.current?.focus(), 50)
+      return () => clearTimeout(timer)
     }
-  }, [isOpen, isMinimized])
+  }, [isOpen, isMinimized, isLoading])
 
   const handleSend = async () => {
     const trimmed = input.trim()
@@ -172,12 +175,9 @@ export function AIChatbot() {
     setIsLoading(true)
     setStreamingContent('')
 
-    // Create abort controller for this request with timeout
+    // Create abort controller for this request
     const abortController = new AbortController()
     abortRef.current = abortController
-    const timeoutId = setTimeout(() => {
-      abortController.abort()
-    }, 60000) // 60 second timeout
 
     try {
       const response = await fetch('/api/chat', {
@@ -209,9 +209,16 @@ export function AIChatbot() {
         const decoder = new TextDecoder()
         let accumulated = ''
         let sseBuffer = ''
+        let streamDone = false
+
+        // Client-side safety timeout (60s) to prevent stream from hanging forever
+        const streamTimeout = setTimeout(() => {
+          streamDone = true
+          try { reader.cancel() } catch { /* ignore */ }
+        }, 60_000)
 
         try {
-          while (true) {
+          while (!streamDone) {
             const { done, value } = await reader.read()
             if (done) break
 
@@ -224,7 +231,12 @@ export function AIChatbot() {
               if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue
 
               const data = trimmedLine.slice(6).trim()
-              if (!data || data === '[DONE]') continue
+              if (!data) continue
+              if (data === '[DONE]') {
+                // Stream finished — break out of BOTH loops immediately
+                streamDone = true
+                break
+              }
 
               try {
                 const parsed = JSON.parse(data)
@@ -237,31 +249,8 @@ export function AIChatbot() {
               }
             }
           }
-
-          // Process any remaining buffer
-          if (sseBuffer.trim()) {
-            const remaining = sseBuffer.trim()
-            if (remaining.startsWith('data: ')) {
-              const data = remaining.slice(6).trim()
-              if (data && data !== '[DONE]') {
-                try {
-                  const parsed = JSON.parse(data)
-                  if (parsed.content) {
-                    accumulated += parsed.content
-                    setStreamingContent(accumulated)
-                  }
-                } catch { /* ignore */ }
-              }
-            }
-          }
-        } catch (readError) {
-          // If abort due to timeout, use whatever we have
-          if ((readError as Error).name === 'AbortError' && accumulated) {
-            // We have partial content, that's fine
-          } else if ((readError as Error).name !== 'AbortError') {
-            throw readError
-          }
         } finally {
+          clearTimeout(streamTimeout)
           try { reader.releaseLock() } catch { /* already released */ }
         }
 
@@ -293,25 +282,7 @@ export function AIChatbot() {
       }
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        // Timeout or user cancelled
-        if (streamingContent) {
-          // We have partial content, save it
-          const partialMessage: ChatMessage = {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content: streamingContent + '\n\n_(Response was cut off due to timeout)_',
-            timestamp: new Date(),
-          }
-          setMessages((prev) => [...prev, partialMessage])
-        } else {
-          const timeoutMessage: ChatMessage = {
-            id: `error-${Date.now()}`,
-            role: 'assistant',
-            content: '⏱️ The response took too long. Please try again.',
-            timestamp: new Date(),
-          }
-          setMessages((prev) => [...prev, timeoutMessage])
-        }
+        // User cancelled, ignore
         return
       }
       console.error('Chat error:', error)
@@ -331,7 +302,6 @@ export function AIChatbot() {
         variant: 'destructive',
       })
     } finally {
-      clearTimeout(timeoutId)
       setIsLoading(false)
       setStreamingContent('')
       abortRef.current = null

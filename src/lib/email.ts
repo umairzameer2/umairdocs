@@ -242,14 +242,15 @@ export function invitationEmailTemplate({
 export function welcomeEmailTemplate({
   name,
   email,
-  isSignup,
+  appUrl,
 }: {
   name: string
   email: string
-  isSignup: boolean
+  appUrl?: string
 }): { html: string; text: string } {
-  const action = isSignup ? 'created your account' : 'signed in'
-  const text = `Hi ${name}, you just ${action} on UmairDocs with ${email}. If this wasn't you, please contact us immediately.`
+  const displayName = name || email.split('@')[0]
+  const url = appUrl || 'https://umairdocs.vercel.app'
+  const text = `Welcome to UmairDocs, ${displayName}! Your account has been created successfully. Start creating documents at ${url}`
 
   const html = `
 <!DOCTYPE html>
@@ -265,9 +266,16 @@ export function welcomeEmailTemplate({
         <table width="520" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);">
           <!-- Header -->
           <tr>
-            <td style="background: linear-gradient(135deg, #7c3aed, #a855f7); padding: 32px 40px; text-align: center;">
-              <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -0.02em;">
-                🎉 ${isSignup ? 'Welcome to UmairDocs!' : 'Sign-in Notification'}
+            <td style="background: linear-gradient(135deg, #7c3aed, #a855f7); padding: 40px 40px 32px; text-align: center;">
+              <table cellpadding="0" cellspacing="0" style="margin: 0 auto 16px;">
+                <tr>
+                  <td style="background-color: rgba(255,255,255,0.2); border-radius: 12px; padding: 10px 14px;">
+                    <span style="font-size: 24px;">📄</span>
+                  </td>
+                </tr>
+              </table>
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.02em;">
+                Welcome to UmairDocs!
               </h1>
               <p style="margin: 8px 0 0; color: rgba(255,255,255,0.8); font-size: 14px;">
                 Your document journey starts here
@@ -278,46 +286,76 @@ export function welcomeEmailTemplate({
           <tr>
             <td style="padding: 36px 40px;">
               <p style="margin: 0 0 16px; color: #334155; font-size: 16px; line-height: 1.5;">
-                Hi ${name}, 👋
-              </p>
-              ${isSignup ? `
-              <p style="margin: 0 0 16px; color: #334155; font-size: 16px; line-height: 1.5;">
-                Your UmairDocs account has been created successfully with <strong>${email}</strong>.
+                Hey <strong style="color: #1e293b;">${displayName}</strong>! 🎉
               </p>
               <p style="margin: 0 0 16px; color: #334155; font-size: 16px; line-height: 1.5;">
-                Here's what you can do:
+                Your UmairDocs account has been created successfully. We're excited to have you on board!
               </p>
-              <table cellpadding="0" cellspacing="0" style="margin: 16px 0;">
-                <tr><td style="padding: 6px 0;"><span style="color: #7c3aed;">📄</span> <span style="color: #334155; font-size: 14px;">Create and edit documents with a powerful editor</span></td></tr>
-                <tr><td style="padding: 6px 0;"><span style="color: #7c3aed;">🏢</span> <span style="color: #334155; font-size: 14px;">Organize work with teams and organizations</span></td></tr>
-                <tr><td style="padding: 6px 0;"><span style="color: #7c3aed;">🤖</span> <span style="color: #334155; font-size: 14px;">Get AI-powered assistance for your writing</span></td></tr>
-                <tr><td style="padding: 6px 0;"><span style="color: #7c3aed;">🔒</span> <span style="color: #334155; font-size: 14px;">Secure, encrypted document storage</span></td></tr>
-              </table>
-              ` : `
-              <p style="margin: 0 0 16px; color: #334155; font-size: 16px; line-height: 1.5;">
-                A recent sign-in to your UmairDocs account was detected.
-              </p>
-              <table cellpadding="0" cellspacing="0" style="margin: 16px 0;">
+              <!-- Feature highlights -->
+              <table cellpadding="0" cellspacing="0" style="margin: 24px 0; width: 100%;">
                 <tr>
-                  <td style="background-color: #f1f5f9; border-radius: 8px; padding: 12px 16px;">
-                    <p style="margin: 0; color: #64748b; font-size: 13px;">
-                      <strong style="color: #334155;">Email:</strong> ${email}<br>
-                      <strong style="color: #334155;">Time:</strong> ${new Date().toLocaleString()}
-                    </p>
+                  <td style="padding: 12px 0;">
+                    <table cellpadding="0" cellspacing="0" style="width: 100%;">
+                      <tr>
+                        <td style="width: 36px; vertical-align: top;">
+                          <span style="font-size: 18px;">✍️</span>
+                        </td>
+                        <td style="vertical-align: top;">
+                          <p style="margin: 0; color: #1e293b; font-size: 14px; font-weight: 600;">Rich Document Editor</p>
+                          <p style="margin: 2px 0 0; color: #64748b; font-size: 13px;">Create beautiful documents with our powerful editor</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 12px 0; border-top: 1px solid #f1f5f9;">
+                    <table cellpadding="0" cellspacing="0" style="width: 100%;">
+                      <tr>
+                        <td style="width: 36px; vertical-align: top;">
+                          <span style="font-size: 18px;">🤖</span>
+                        </td>
+                        <td style="vertical-align: top;">
+                          <p style="margin: 0; color: #1e293b; font-size: 14px; font-weight: 600;">AI Assistant</p>
+                          <p style="margin: 2px 0 0; color: #64748b; font-size: 13px;">Get help with writing, research, and summarizing</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 12px 0; border-top: 1px solid #f1f5f9;">
+                    <table cellpadding="0" cellspacing="0" style="width: 100%;">
+                      <tr>
+                        <td style="width: 36px; vertical-align: top;">
+                          <span style="font-size: 18px;">👥</span>
+                        </td>
+                        <td style="vertical-align: top;">
+                          <p style="margin: 0; color: #1e293b; font-size: 14px; font-weight: 600;">Team Collaboration</p>
+                          <p style="margin: 2px 0 0; color: #64748b; font-size: 13px;">Share documents and work together in real time</p>
+                        </td>
+                      </tr>
+                    </table>
                   </td>
                 </tr>
               </table>
-              <p style="margin: 16px 0 0; color: #64748b; font-size: 14px; line-height: 1.5;">
-                If this was you, no action is needed. If you don't recognize this activity, please change your password immediately.
-              </p>
-              `}
+              <!-- CTA Button -->
+              <table cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                <tr>
+                  <td style="background: linear-gradient(135deg, #7c3aed, #9333ea); border-radius: 10px;">
+                    <a href="${url}" target="_blank" style="display: inline-block; padding: 14px 36px; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 600; letter-spacing: 0.01em;">
+                      Start Writing →
+                    </a>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
           <!-- Footer -->
           <tr>
             <td style="background-color: #f8fafc; padding: 20px 40px; border-top: 1px solid #e2e8f0;">
               <p style="margin: 0; color: #94a3b8; font-size: 12px; text-align: center;">
-                This is an automated message from UmairDocs. Please do not reply to this email.
+                This email was sent to ${email} because you created an account on UmairDocs.
               </p>
               <p style="margin: 8px 0 0; color: #cbd5e1; font-size: 11px; text-align: center;">
                 © ${new Date().getFullYear()} UmairDocs · Secured with encryption

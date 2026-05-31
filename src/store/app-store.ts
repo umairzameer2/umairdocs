@@ -320,6 +320,41 @@ export const useAppStore = create<AppState>()(
       },
 
       logout: () => {
+        // ─── Clear ALL NextAuth cookies (prevents stale cookies → HTTP 431) ──
+        // Must clear BOTH standard AND __Host- prefixed variants because
+        // switching between them leaves stale cookies that accumulate.
+        if (typeof window !== 'undefined') {
+          // Known NextAuth cookie names to clear
+          const authCookieNames = [
+            'next-auth.session-token',
+            'next-auth.callback-url',
+            'next-auth.csrf-token',
+            '__Host-next-auth.session-token',
+            '__Host-next-auth.callback-url',
+            '__Host-next-auth.csrf-token',
+            'next-auth.pkce.code_verifier',
+            'next-auth.state',
+          ]
+
+          // Clear known cookies explicitly (more reliable than regex)
+          for (const name of authCookieNames) {
+            document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; sameSite=lax`
+            document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; secure=true; sameSite=lax`
+          }
+
+          // Also catch any dynamically-named next-auth cookies
+          document.cookie.split(';').forEach((c) => {
+            const name = c.split('=')[0].trim()
+            if (name.startsWith('next-auth') || name.startsWith('__Host-next-auth')) {
+              document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+              document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; sameSite=lax`
+              document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; secure=true; sameSite=lax`
+            }
+          })
+
+          // Also clear localStorage to remove stale persisted state
+          try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
+        }
         set({
           user: null,
           isAuthenticated: false,
@@ -954,12 +989,14 @@ export const useAppStore = create<AppState>()(
     {
       name: 'umairdocs-storage',
       partialize: (state) => ({
-        user: state.user,
+        // ─── MINIMAL persist: avoid HTTP 431 cookie/header errors ───
+        // Do NOT persist user object here — it's stored in NextAuth session
+        // and Zustand state gets loaded into memory on every request.
+        // Large avatar URLs + user data caused header overflow.
         isAuthenticated: state.isAuthenticated,
-        currentView: state.currentView,
         activeOrgId: state.activeOrgId,
-        avatarVersion: state.avatarVersion,
         sidebarCollapsed: state.sidebarCollapsed,
+        recentDocViewMode: state.recentDocViewMode,
       }),
     }
   )
