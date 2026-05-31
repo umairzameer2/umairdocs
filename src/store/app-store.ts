@@ -955,23 +955,16 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      verifySession: async () => {
+            verifySession: async () => {
         const { user } = get()
         if (!user) return false
         try {
           const res = await fetch(`/api/auth/verify?userId=${user.id}`)
+          if (!res.ok) return true
           const data = await res.json()
-          if (!data.success || !data.valid) {
-            // User no longer exists in database, clear stale session and reload
-            if (typeof window !== 'undefined') {
-              try { localStorage.clear() } catch { /* ignore */ }
-              window.location.href = '/'
-            }
-            return false
-          }
-          return true
+          return !!(data.success && data.valid)
         } catch {
-          return false
+          return true
         }
       },
     }),
