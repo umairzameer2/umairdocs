@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { signOut } from 'next-auth/react'
 import { useAppStore } from '@/store/app-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -88,7 +87,7 @@ function getRoleBadgeVariant(role: string) {
     case 'admin':
       return 'bg-purple-500/10 text-purple-500 border-purple-500/20'
     case 'member':
-      return 'bg-muted text-muted-foreground border-border'
+      return 'bg-green-500/10 text-green-500 border-green-500/20'
     case 'viewer':
       return 'bg-amber-500/10 text-amber-500 border-amber-500/20'
     default:
@@ -100,6 +99,8 @@ function getRoleIcon(role: string) {
   switch (role) {
     case 'admin':
       return <Shield className="w-3 h-3" />
+    case 'member':
+      return <User className="w-3 h-3" />
     case 'viewer':
       return <Eye className="w-3 h-3" />
     default:
@@ -146,7 +147,7 @@ export function AppSidebar() {
 
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState('member')
+  const [inviteRole, setInviteRole] = useState('viewer')
   const [inviting, setInviting] = useState(false)
   const [inviteResult, setInviteResult] = useState<{
     acceptUrl: string
@@ -175,6 +176,13 @@ export function AppSidebar() {
   // ── Derived values ────────────────────────────────────────────
   const activeOrg = organizations.find((o) => o.id === activeOrgId) || null
   const initials = getInitials(user?.name ?? null, user?.email ?? '')
+
+  // ── Role-based permissions for sidebar actions ───────────────
+  const userOrgRole = activeOrg?.role ?? null
+  // Only admins can invite, manage members, and delete org
+  const canInvite = !activeOrgId || userOrgRole === 'admin'
+  const canDeleteOrg = !activeOrgId || userOrgRole === 'admin'
+  const canManageMembers = !activeOrgId || userOrgRole === 'admin'
 
   // ── Fetch orgs & changes on mount / org switch ────────────────
   useEffect(() => {
@@ -243,7 +251,7 @@ export function AppSidebar() {
           title: emailConfigured ? 'Invitation sent!' : 'Invitation created!',
           description: emailConfigured
             ? `An invitation email has been sent to ${inviteEmail}`
-            : `Email not configured — copy the invitation link below to share manually`,
+            : `Email not configured — share this link: ${acceptUrl || 'see link below'}`,
         })
         // Re-fetch to update members list
         fetchOrganizations()
@@ -281,11 +289,8 @@ export function AppSidebar() {
     [updateOrgMemberRole, fetchOrganizations],
   )
 
-  const handleSignOut = useCallback(async () => {
+  const handleSignOut = useCallback(() => {
     logout()
-    // Also call NextAuth signOut to properly destroy the httpOnly session cookie
-    // Without this, the session cookie survives and SessionSync re-authenticates
-    await signOut({ redirect: false })
     toast({ title: 'Signed out', description: 'You have been signed out successfully' })
   }, [logout])
 
@@ -808,6 +813,9 @@ export function AppSidebar() {
                           <Building2 className="w-3.5 h-3.5 mr-2 text-purple-500" />
                           Switch to workspace
                         </DropdownMenuItem>
+                        {/* Delete organization — only for admins */}
+                        {org.role === 'admin' && (
+                        <>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="cursor-pointer text-xs text-red-600 focus:text-red-600 focus:bg-red-50 py-2"
@@ -819,6 +827,8 @@ export function AppSidebar() {
                           <Trash2 className="w-3.5 h-3.5 mr-2" />
                           Delete organization
                         </DropdownMenuItem>
+                        </>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </motion.div>
@@ -958,12 +968,13 @@ export function AppSidebar() {
                         Members
                       </p>
 
-                      {/* Invite Member */}
+                      {/* Invite Member — only for admins */}
+                      {canInvite && (
                       <Dialog open={inviteOpen} onOpenChange={(open) => {
                         setInviteOpen(open)
                         if (!open) {
                           setInviteEmail('')
-                          setInviteRole('member')
+                          setInviteRole('viewer')
                           setInviteResult(null)
                         }
                       }}>
@@ -1075,18 +1086,11 @@ export function AppSidebar() {
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="admin">
-                                      <div className="flex items-center gap-2">
-                                        <Shield className="w-3.5 h-3.5 text-purple-500" />
-                                        <span>Admin</span>
-                                        <span className="text-xs text-muted-foreground">— Full access</span>
-                                      </div>
-                                    </SelectItem>
                                     <SelectItem value="member">
                                       <div className="flex items-center gap-2">
-                                        <User className="w-3.5 h-3.5 text-muted-foreground" />
+                                        <User className="w-3.5 h-3.5 text-green-500" />
                                         <span>Member</span>
-                                        <span className="text-xs text-muted-foreground">— Edit access</span>
+                                        <span className="text-xs text-muted-foreground">— Can create & edit docs</span>
                                       </div>
                                     </SelectItem>
                                     <SelectItem value="viewer">
@@ -1141,6 +1145,7 @@ export function AppSidebar() {
                           </DialogFooter>
                         </DialogContent>
                       </Dialog>
+                      )}
                     </div>
 
                     {/* Members list */}
@@ -1166,7 +1171,8 @@ export function AppSidebar() {
                             </p>
                           </div>
 
-                          {/* Clickable Role Badge — opens role change dropdown */}
+                          {/* Role Badge — clickable dropdown for admins, static for others */}
+                          {canManageMembers ? (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Badge
@@ -1212,6 +1218,18 @@ export function AppSidebar() {
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
+                          ) : (
+                          /* Static role badge for viewers/members */
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] px-1.5 py-0 h-5 font-medium gap-0.5 ${getRoleBadgeVariant(
+                              member.role,
+                            )}`}
+                          >
+                            {getRoleIcon(member.role)}
+                            {member.role}
+                          </Badge>
+                          )}
                         </motion.div>
                       ))}
 

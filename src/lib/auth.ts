@@ -16,9 +16,10 @@ export async function verifyPassword(password: string, hashedPassword: string): 
 }
 
 export async function getSessionUser(request: NextRequest) {
-  const userId = request.headers.get('x-user-id')
+  // Check header first, then fall back to query parameter
+  const userId = request.headers.get('x-user-id') || request.nextUrl.searchParams.get('userId')
   if (!userId) return null
-  
+
   const user = await db.user.findUnique({
     where: { id: userId },
     select: { id: true, email: true, name: true, avatar: true },

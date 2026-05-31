@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getUserOrgRole, CAN_EDIT_ROLES } from '@/lib/permissions'
 
 export async function GET(request: NextRequest) {
   try {
@@ -72,6 +73,25 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Title and author ID are required' },
         { status: 400 }
       )
+    }
+
+    // ── Role-based permission check for org documents ──
+    // If an organizationId is provided, the user must be a member with
+    // at least "member" role. Viewers cannot create documents.
+    if (organizationId) {
+      const role = await getUserOrgRole(authorId, organizationId)
+      if (!role) {
+        return NextResponse.json(
+          { success: false, error: 'You are not a member of this organization' },
+          { status: 403 }
+        )
+      }
+      if (!CAN_EDIT_ROLES.has(role)) {
+        return NextResponse.json(
+          { success: false, error: 'Viewers cannot create documents in this organization' },
+          { status: 403 }
+        )
+      }
     }
 
     // Get template default content

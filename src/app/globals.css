@@ -252,19 +252,93 @@
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
   border: 2px solid transparent;
   border-radius: 10px;
+  position: relative;
 }
 
-.umair-img-wrapper:hover {
+.umair-img-wrapper:hover,
+.umair-img-wrapper.umair-img-selected {
   border-color: #7c3aed;
   box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
 }
 
-.umair-img-wrapper .umair-img-resize-handle {
+.umair-img-wrapper [class^="umair-img-resize"] {
   opacity: 0;
   transition: opacity 0.15s ease;
+  z-index: 10;
 }
 
-.umair-img-wrapper:hover .umair-img-resize-handle {
+.umair-img-wrapper:hover [class^="umair-img-resize"],
+.umair-img-wrapper.umair-img-selected [class^="umair-img-resize"] {
+  opacity: 1;
+}
+
+/* Image alignment toolbar */
+.umair-img-align-toolbar {
+  position: absolute;
+  top: -36px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  background: #7c3aed;
+  border-radius: 6px;
+  padding: 3px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.umair-img-wrapper:hover .umair-img-align-toolbar,
+.umair-img-wrapper.umair-img-selected .umair-img-align-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.umair-img-align-toolbar button {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: white;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: background 0.1s ease;
+}
+
+.umair-img-align-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.umair-img-align-toolbar button.umair-align-active {
+  background: rgba(255, 255, 255, 0.3);
+  font-weight: bold;
+}
+
+/* Drag overlay indicator */
+.umair-img-drag-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(124, 58, 237, 0.85);
+  color: white;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 30;
+}
+
+.umair-img-drag-indicator.umair-drag-visible {
   opacity: 1;
 }
 
@@ -287,119 +361,6 @@
 
 .dark [contenteditable] td, .dark [contenteditable] th {
   border-color: oklch(0.35 0 0);
-}
-
-/* ─── Print Styles ─────────────────────────────────────────────────── */
-@media print {
-  /* Reset body for print */
-  body {
-    margin: 0 !important;
-    padding: 0 !important;
-    background: white !important;
-    overflow: visible !important;
-  }
-
-  /* Hide everything first */
-  body > * {
-    display: none !important;
-  }
-
-  /* Show the root div that contains the editor */
-  body > div:first-child {
-    display: flex !important;
-  }
-
-  /* Hide everything inside the root div except the editor area */
-  body > div:first-child > * {
-    display: none !important;
-  }
-
-  /* Show the editor content wrapper */
-  body > div:first-child > .flex-1 {
-    display: block !important;
-  }
-
-  /* Hide everything inside the content wrapper except the max-w-4xl container */
-  body > div:first-child > .flex-1 > * {
-    display: none !important;
-  }
-
-  /* Show the max-w-4xl container */
-  body > div:first-child > .flex-1 > .max-w-4xl {
-    display: block !important;
-  }
-
-  /* The editor content area */
-  [contenteditable] {
-    position: static !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-    background: white !important;
-    color: black !important;
-    font-size: 12pt !important;
-    line-height: 1.5 !important;
-    overflow: visible !important;
-    transform: none !important;
-  }
-
-  [contenteditable] * {
-    visibility: visible !important;
-  }
-
-  /* Hide resize handles on images */
-  .umair-img-resize-handle {
-    display: none !important;
-  }
-
-  /* Remove purple border on image wrappers */
-  .umair-img-wrapper {
-    border: none !important;
-    box-shadow: none !important;
-    transform: none !important;
-    cursor: default !important;
-  }
-
-  /* Images print nicely */
-  [contenteditable] img {
-    max-width: 100% !important;
-    height: auto !important;
-    page-break-inside: avoid;
-  }
-
-  [contenteditable] table {
-    page-break-inside: avoid;
-  }
-
-  [contenteditable] p,
-  [contenteditable] h1,
-  [contenteditable] h2,
-  [contenteditable] h3,
-  [contenteditable] li,
-  [contenteditable] blockquote {
-    page-break-inside: avoid;
-  }
-
-  /* Remove card styling in print */
-  .py-8.px-4 > .max-w-4xl > div {
-    border: none !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-    background: white !important;
-    padding: 0 !important;
-    min-height: auto !important;
-  }
-
-  /* Dark mode forced white in print */
-  .dark [contenteditable],
-  .dark [contenteditable] * {
-    color: black !important;
-    background: white !important;
-  }
 }
 
 /* Custom scrollbar */

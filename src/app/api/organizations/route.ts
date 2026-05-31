@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
         members: {
           create: {
             userId,
-            role: 'owner',
+            role: 'admin',
           },
         },
       },
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
         createdBy: organization.createdBy,
         createdAt: organization.createdAt.toISOString(),
         updatedAt: organization.updatedAt.toISOString(),
-        role: 'owner',
+        role: 'admin',
         memberCount: organization.members.length,
         documentCount: 0,
         members: organization.members.map((m) => ({

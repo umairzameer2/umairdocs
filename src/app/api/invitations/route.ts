@@ -1,18 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { sendEmail, isEmailConfigured, invitationEmailTemplate } from '@/lib/email'
+import { getUserOrgRole } from '@/lib/org-permissions'
 import crypto from 'crypto'
+
+// Valid roles that can be assigned to invited users
+const VALID_INVITE_ROLES = ['member', 'viewer']
 
 // ─── Create an invitation ────────────────────────────────────────
 // POST /api/invitations
 // Body: { orgId, email, role, invitedBy }
+// Only admins can create invitations.
 export async function POST(request: NextRequest) {
   try {
-    const { orgId, email, role = 'member', invitedBy } = await request.json()
+    const { orgId, email, role = 'viewer', invitedBy } = await request.json()
 
     if (!orgId || !email || !invitedBy) {
       return NextResponse.json(
         { success: false, error: 'orgId, email, and invitedBy are required' },
+        { status: 400 }
+      )
+    }
+
+    // Validate role — only member or viewer can be assigned via invitation
+    if (!VALID_INVITE_ROLES.includes(role)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid role. Only "member" or "viewer" can be assigned to invited members.' },
         { status: 400 }
       )
     }
@@ -38,11 +51,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check inviter is a member of the org
-    const inviterMember = org.members.find((m) => m.userId === invitedBy)
-    if (!inviterMember) {
+    // Check inviter is an ADMIN of the org (only admins can invite)
+    const inviterRole = await getUserOrgRole(invitedBy, orgId)
+    if (!inviterRole) {
       return NextResponse.json(
         { success: false, error: 'You are not a member of this organization' },
+        { status: 403 }
+      )
+    }
+    if (inviterRole !== 'admin') {
+      return NextResponse.json(
+        { success: false, error: 'Only the organization admin can invite members' },
         { status: 403 }
       )
     }
@@ -146,15 +165,28 @@ export async function POST(request: NextRequest) {
 
 // ─── List pending invitations for an org ──────────────────────────
 // GET /api/invitations?orgId=xxx
+// Only admins can list invitations.
 export async function GET(request: NextRequest) {
   try {
     const orgId = request.nextUrl.searchParams.get('orgId')
+    const userId = request.nextUrl.searchParams.get('userId')
 
     if (!orgId) {
       return NextResponse.json(
         { success: false, error: 'orgId is required' },
         { status: 400 }
       )
+    }
+
+    // Verify the requester is an admin
+    if (userId) {
+      const role = await getUserOrgRole(userId, orgId)
+      if (role !== 'admin') {
+        return NextResponse.json(
+          { success: false, error: 'Only admins can view invitations' },
+          { status: 403 }
+        )
+      }
     }
 
     const invitations = await db.invitation.findMany({
@@ -193,16 +225,38 @@ export async function GET(request: NextRequest) {
 }
 
 // ─── Delete/cancel an invitation ──────────────────────────────────
-// DELETE /api/invitations?invitationId=xxx
+// DELETE /api/invitations?invitationId=xxx&userId=xxx
+// Only admins can cancel invitations.
 export async function DELETE(request: NextRequest) {
   try {
     const invitationId = request.nextUrl.searchParams.get('invitationId')
+    const userId = request.nextUrl.searchParams.get('userId')
 
     if (!invitationId) {
       return NextResponse.json(
         { success: false, error: 'invitationId is required' },
         { status: 400 }
       )
+    }
+
+    // Find the invitation to get the orgId
+    const invitation = await db.invitation.findUnique({ where: { id: invitationId } })
+    if (!invitation) {
+      return NextResponse.json(
+        { success: false, error: 'Invitation not found' },
+        { status: 404 }
+      )
+    }
+
+    // Verify the requester is an admin of the org
+    if (userId) {
+      const role = await getUserOrgRole(userId, invitation.orgId)
+      if (role !== 'admin') {
+        return NextResponse.json(
+          { success: false, error: 'Only admins can cancel invitations' },
+          { status: 403 }
+        )
+      }
     }
 
     await db.invitation.delete({ where: { id: invitationId } })

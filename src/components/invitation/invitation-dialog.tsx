@@ -53,6 +53,7 @@ export function InvitationDialog({ token, onClose }: InvitationDialogProps) {
   const [step, setStep] = useState<Step>('loading')
   const [invitation, setInvitation] = useState<InvitationDetails | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  const [isAccepting, setIsAccepting] = useState(false)
 
   // Signup fields
   const [signupName, setSignupName] = useState('')
@@ -115,7 +116,7 @@ export function InvitationDialog({ token, onClose }: InvitationDialogProps) {
       }
     }
 
-    setStep('accepting')
+    setIsAccepting(true)
     try {
       const body: Record<string, string> = {}
       if (!isAuthenticated) {
@@ -136,6 +137,7 @@ export function InvitationDialog({ token, onClose }: InvitationDialogProps) {
 
       if (data.success) {
         setStep('accepted')
+        setIsAccepting(false)
         // If a new user was created, auto-login
         if (data.user && !isAuthenticated) {
           setUser(data.user)
@@ -147,19 +149,33 @@ export function InvitationDialog({ token, onClose }: InvitationDialogProps) {
         })
       } else if (data.needsSignup) {
         setStep('signup')
+        setIsAccepting(false)
       } else {
         setStep('error')
         setErrorMessage(data.error || 'Failed to accept invitation')
+        setIsAccepting(false)
       }
     } catch {
       setStep('error')
       setErrorMessage('Network error. Please try again.')
+      setIsAccepting(false)
     }
   }, [invitation, isAuthenticated, user, signupName, signupPassword, signupConfirm, token, setUser, setCurrentView])
+
+  // Auto-close dialog after accepting invitation
+  useEffect(() => {
+    if (step === 'accepted') {
+      const timer = setTimeout(() => {
+        onClose()
+      }, 2500) // 2.5 seconds to see the success animation
+      return () => clearTimeout(timer)
+    }
+  }, [step, onClose])
 
   const getRoleIcon = (role: string) => {
     switch (role) {
       case 'admin': return <Shield className="w-4 h-4 text-purple-500" />
+      case 'member': return <User className="w-4 h-4 text-green-500" />
       case 'viewer': return <Eye className="w-4 h-4 text-amber-500" />
       default: return <User className="w-4 h-4 text-slate-500" />
     }
@@ -327,14 +343,14 @@ export function InvitationDialog({ token, onClose }: InvitationDialogProps) {
                     variant="outline"
                     onClick={onClose}
                     className="flex-1"
-                    disabled={step === 'accepting'}
+                    disabled={isAccepting}
                   >
                     Decline
                   </Button>
                   <Button
                     onClick={handleAccept}
                     disabled={
-                      step === 'accepting' ||
+                      isAccepting ||
                       (!isAuthenticated && !invitation.userExists && (!signupPassword || signupPassword.length < 6))
                     }
                     className="flex-1 bg-purple-600 hover:bg-purple-700 text-white"

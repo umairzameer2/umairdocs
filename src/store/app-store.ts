@@ -320,41 +320,6 @@ export const useAppStore = create<AppState>()(
       },
 
       logout: () => {
-        // ─── Clear ALL NextAuth cookies (prevents stale cookies → HTTP 431) ──
-        // Must clear BOTH standard AND __Host- prefixed variants because
-        // switching between them leaves stale cookies that accumulate.
-        if (typeof window !== 'undefined') {
-          // Known NextAuth cookie names to clear
-          const authCookieNames = [
-            'next-auth.session-token',
-            'next-auth.callback-url',
-            'next-auth.csrf-token',
-            '__Host-next-auth.session-token',
-            '__Host-next-auth.callback-url',
-            '__Host-next-auth.csrf-token',
-            'next-auth.pkce.code_verifier',
-            'next-auth.state',
-          ]
-
-          // Clear known cookies explicitly (more reliable than regex)
-          for (const name of authCookieNames) {
-            document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; sameSite=lax`
-            document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; secure=true; sameSite=lax`
-          }
-
-          // Also catch any dynamically-named next-auth cookies
-          document.cookie.split(';').forEach((c) => {
-            const name = c.split('=')[0].trim()
-            if (name.startsWith('next-auth') || name.startsWith('__Host-next-auth')) {
-              document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
-              document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; sameSite=lax`
-              document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; secure=true; sameSite=lax`
-            }
-          })
-
-          // Also clear localStorage to remove stale persisted state
-          try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
-        }
         set({
           user: null,
           isAuthenticated: false,
@@ -378,9 +343,16 @@ export const useAppStore = create<AppState>()(
         if (!user) return
         try {
           if (activeOrgId) {
+            // Invalidate cache to ensure fresh data (org may have been deleted)
+            invalidateCache('docs-org-')
             const data = await dedupedFetch<{ success: boolean; documents: Document[] }>(`docs-org-${activeOrgId}`, `/api/documents?organizationId=${activeOrgId}`)
             if (data && data.success) {
               set({ orgDocuments: data.documents })
+            } else if (data && !data.success) {
+              // Org might have been deleted — clear stale state
+              set({ orgDocuments: [], activeOrgId: null })
+              invalidateCache('orgs-')
+              invalidateCache('changes-org-')
             }
           } else {
             const data = await dedupedFetch<{ success: boolean; documents: Document[] }>(`docs-user-${user.id}`, `/api/documents?authorId=${user.id}`)
@@ -460,7 +432,8 @@ export const useAppStore = create<AppState>()(
 
       deleteDocument: async (id) => {
         try {
-          const res = await fetch(`/api/documents/${id}`, { method: 'DELETE' })
+          const { user } = get()
+          const res = await fetch(`/api/documents/${id}?userId=${user?.id || ''}`, { method: 'DELETE' })
           const data = await res.json()
           if (data.success) {
             invalidateCache('docs-')
@@ -492,9 +465,24 @@ export const useAppStore = create<AppState>()(
         const { user } = get()
         if (!user) return
         try {
+          // Always force a fresh fetch (invalidate cache) to ensure deleted orgs are removed
+          invalidateCache('orgs-')
           const data = await dedupedFetch<{ success: boolean; organizations: Organization[] }>(`orgs-${user.id}`, `/api/organizations?userId=${user.id}`)
           if (data && data.success) {
-            set({ organizations: data.organizations })
+            const { activeOrgId } = get()
+            // If the active org no longer exists in the database, clear it
+            const activeOrgStillExists = activeOrgId
+              ? data.organizations.some((org) => org.id === activeOrgId)
+              : true
+            set({
+              organizations: data.organizations,
+              ...(activeOrgStillExists ? {} : { activeOrgId: null }),
+            })
+            // Also clear org documents if active org was removed
+            if (!activeOrgStillExists) {
+              invalidateCache('docs-org-')
+              invalidateCache('changes-org-')
+            }
           }
         } catch {
           // silently fail
@@ -526,7 +514,8 @@ export const useAppStore = create<AppState>()(
 
       deleteOrganization: async (id) => {
         try {
-          const res = await fetch(`/api/organizations/${id}`, { method: 'DELETE' })
+          const { user } = get()
+          const res = await fetch(`/api/organizations/${id}?userId=${user?.id || ''}`, { method: 'DELETE' })
           const data = await res.json()
           if (data.success) {
             invalidateCache('orgs-')
@@ -554,7 +543,7 @@ export const useAppStore = create<AppState>()(
             body: JSON.stringify({
               orgId,
               email,
-              role: role || 'member',
+              role: role || 'viewer',
               invitedBy: user?.id,
             }),
           })
@@ -585,7 +574,8 @@ export const useAppStore = create<AppState>()(
             }
           }
 
-          const res = await fetch(`/api/organizations/${targetOrgId}/members/${memberId}`, {
+          const { user } = get()
+          const res = await fetch(`/api/organizations/${targetOrgId}/members/${memberId}?userId=${user?.id || ''}`, {
             method: 'DELETE',
           })
           const data = await res.json()
@@ -620,7 +610,8 @@ export const useAppStore = create<AppState>()(
             }
           }
 
-          const res = await fetch(`/api/organizations/${targetOrgId}/members/${memberId}`, {
+          const { user } = get()
+          const res = await fetch(`/api/organizations/${targetOrgId}/members/${memberId}?userId=${user?.id || ''}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ role }),
@@ -989,14 +980,12 @@ export const useAppStore = create<AppState>()(
     {
       name: 'umairdocs-storage',
       partialize: (state) => ({
-        // ─── MINIMAL persist: avoid HTTP 431 cookie/header errors ───
-        // Do NOT persist user object here — it's stored in NextAuth session
-        // and Zustand state gets loaded into memory on every request.
-        // Large avatar URLs + user data caused header overflow.
+        user: state.user,
         isAuthenticated: state.isAuthenticated,
+        currentView: state.currentView,
         activeOrgId: state.activeOrgId,
+        avatarVersion: state.avatarVersion,
         sidebarCollapsed: state.sidebarCollapsed,
-        recentDocViewMode: state.recentDocViewMode,
       }),
     }
   )

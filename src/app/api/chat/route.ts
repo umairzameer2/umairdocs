@@ -1,17 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// ─── Configuration ────────────────────────────────────────────────
-// Uses z-ai-web-dev-sdk by default (no API key needed).
-// Optionally configure OpenAI-compatible API for custom models:
-//   AI_API_KEY=your-api-key-here
-//   AI_BASE_URL=https://api.openai.com/v1
-//   AI_MODEL=gpt-4o-mini
-// ───────────────────────────────────────────────────────────────────
-
 const AI_API_KEY = (process.env.AI_API_KEY || '').trim()
-const AI_BASE_URL = (process.env.AI_BASE_URL || 'https://api.openai.com/v1').trim()
-const AI_MODEL = (process.env.AI_MODEL || 'gpt-4o-mini').trim()
-const USE_SDK = !AI_API_KEY
+const AI_BASE_URL = (process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').trim()
+const AI_MODEL = (process.env.AI_MODEL || 'llama-3.1-8b-instant').trim()
 
 // In-memory conversation store
 interface ConversationEntry {
@@ -69,40 +60,6 @@ const SYSTEM_PROMPT = `You are UmairDocs AI Assistant — a friendly, knowledgea
 - Use **bold** for emphasis on key terms
 - Keep paragraphs short (2-3 sentences max)`
 
-// ─── Cached ZAI instance ──────────────────────────────────────────
-let zaiInstance: Awaited<ReturnType<typeof import('z-ai-web-dev-sdk').default>> | null = null
-let zaiInitPromise: Promise<typeof zaiInstance> | null = null
-
-async function getZAIInstance() {
-  if (zaiInstance) return zaiInstance
-  if (zaiInitPromise) return zaiInitPromise
-
-  zaiInitPromise = (async () => {
-    try {
-      const ZAI = (await import('z-ai-web-dev-sdk')).default
-      const instance = await ZAI.create()
-      zaiInstance = instance
-      return instance
-    } catch (err) {
-      console.error('Failed to initialize z-ai-web-dev-sdk:', err)
-      zaiInitPromise = null
-      throw new Error('SDK initialization failed')
-    }
-  })()
-
-  return zaiInitPromise
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val) },
-      (err) => { clearTimeout(timer); reject(err) }
-    )
-  })
-}
-
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, baseDelay = 1000): Promise<T> {
   let lastError: unknown = null
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -120,174 +77,15 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, baseDelay = 10
   throw lastError
 }
 
-// ─── SDK-based handler ─────────────────────────────────────────────
-async function handleWithSDK(
-  messages: Array<{ role: string; content: string }>,
-  stream: boolean
-) {
-  const zai = await getZAIInstance()
-
-  const sdkMessages = messages.map(m => ({
-    role: (m.role === 'system' ? 'assistant' : m.role) as 'assistant' | 'user',
-    content: m.content,
-  }))
-
-  async function createCompletion() {
-    return withRetry(
-      () => withTimeout(
-        zai.chat.completions.create({
-          messages: sdkMessages,
-          thinking: { type: 'disabled' },
-        }),
-        45_000,
-        'SDK chat completion'
-      ),
-      2,
-      1000
-    )
-  }
-
-  const completion = await createCompletion()
-  const fullContent = completion.choices?.[0]?.message?.content || ''
-
-  if (!stream) {
-    return { type: 'json' as const, response: fullContent }
-  }
-
-  const encoder = new TextEncoder()
-  const FIRST_CHUNK_SIZE = 80
-  const CHUNK_SIZE = 20
-  let offset = 0
-  let isFirstChunk = true
-
-  const stream$ = new ReadableStream({
-    async pull(controller) {
-      if (offset >= fullContent.length) {
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-        controller.close()
-        return
-      }
-      const size = isFirstChunk ? FIRST_CHUNK_SIZE : CHUNK_SIZE
-      isFirstChunk = false
-      const chunk = fullContent.slice(offset, offset + size)
-      offset += size
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`))
-      await new Promise((r) => setTimeout(r, 25))
-    },
-  })
-
-  return { type: 'stream' as const, stream: stream$, content: fullContent }
-}
-
-// ─── OpenAI-compatible API handler ────────────────────────────────
-async function handleWithOpenAI(
-  messages: Array<{ role: string; content: string }>,
-  stream: boolean
-) {
-  // Ensure API key has no invalid characters
-  const cleanKey = AI_API_KEY.replace(/[\r\n"']/g, '')
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${cleanKey}`,
-  }
-
-  if (!stream) {
-    const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: AI_MODEL,
-        messages,
-        temperature: 0.7,
-        max_tokens: 2048,
-      }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => 'Unknown error')
-      console.error('AI API error:', response.status, errText)
-      throw new Error(`AI API error (${response.status})`)
-    }
-
-    const completion = await response.json()
-    const aiResponse = completion.choices?.[0]?.message?.content
-    if (!aiResponse) throw new Error('No response from AI')
-    return { type: 'json' as const, response: aiResponse }
-  }
-
-  // Streaming
-  const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: AI_MODEL,
-      messages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 2048,
-    }),
-  })
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => 'Unknown error')
-    console.error('AI API error:', response.status, errText)
-    throw new Error(`AI API error (${response.status})`)
-  }
-
-  if (!response.body) throw new Error('No response body')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  const encoder = new TextEncoder()
-  let fullContent = ''
-  let sseBuffer = ''
-
-  const stream$ = new ReadableStream({
-    async pull(controller) {
-      try {
-        const { done, value } = await reader.read()
-        if (done) {
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-          controller.close()
-          return
-        }
-
-        sseBuffer += decoder.decode(value, { stream: true })
-        const lines = sseBuffer.split('\n')
-        sseBuffer = lines.pop() || ''
-
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed || !trimmed.startsWith('data: ')) continue
-          const data = trimmed.slice(6).trim()
-          if (!data || data === '[DONE]') continue
-
-          try {
-            const parsed = JSON.parse(data)
-            const delta = parsed.choices?.[0]?.delta?.content
-            if (delta) {
-              fullContent += delta
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`))
-            }
-          } catch { /* ignore */ }
-        }
-      } catch (err) {
-        console.error('Stream read error:', err)
-        try { controller.close() } catch { /* already closed */ }
-      }
-    },
-    cancel() {
-      reader.cancel()
-    },
-  })
-
-  return { type: 'stream' as const, stream: stream$, content: fullContent }
-}
-
-// ─── Main POST handler ─────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
+    if (!AI_API_KEY) {
+      return NextResponse.json(
+        { error: 'AI is not configured. Please set AI_API_KEY environment variable.' },
+        { status: 500 }
+      )
+    }
+
     const { sessionId, message, documentContext, stream: useStream } = await request.json()
 
     if (!message || typeof message !== 'string') {
@@ -326,73 +124,118 @@ export async function POST(request: NextRequest) {
 
     const shouldStream = useStream !== false
 
-    let result: Awaited<ReturnType<typeof handleWithSDK> | ReturnType<typeof handleWithOpenAI>>
+    if (!shouldStream) {
+      const result = await withRetry(async () => {
+        const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${AI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: AI_MODEL,
+            messages: history,
+            temperature: 0.7,
+            max_tokens: 2048,
+          }),
+        })
 
-    if (USE_SDK) {
-      result = await handleWithSDK(entry.messages, shouldStream)
-    } else {
-      result = await handleWithOpenAI(entry.messages, shouldStream)
-    }
+        if (!response.ok) {
+          const errText = await response.text().catch(() => 'Unknown error')
+          console.error('AI API error:', response.status, errText)
+          throw new Error(`AI API error (${response.status})`)
+        }
 
-    if (result.type === 'json') {
-      entry.messages.push({ role: 'assistant', content: result.response })
+        const completion = await response.json()
+        return completion.choices?.[0]?.message?.content || ''
+      })
+
+      entry.messages.push({ role: 'assistant', content: result })
       entry.lastAccessed = Date.now()
       conversations.set(sessionKey, entry)
 
       return NextResponse.json({
         success: true,
-        response: result.response,
+        response: result,
         messageCount: entry.messages.length - 1,
       })
     }
 
-    // Streaming response
+    // Streaming
+    const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${AI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        messages: history,
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 2048,
+      }),
+    })
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => 'Unknown error')
+      console.error('AI API error:', response.status, errText)
+      return NextResponse.json(
+        { error: `AI API error (${response.status})` },
+        { status: 500 }
+      )
+    }
+
+    if (!response.body) {
+      return NextResponse.json({ error: 'No response body from AI' }, { status: 500 })
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    const encoder = new TextEncoder()
+    let fullContent = ''
+    let sseBuffer = ''
     const entryRef = entry
     const sessionKeyRef = sessionKey
-    const capturedContent = result.content
-    let fullStreamedContent = USE_SDK ? capturedContent : ''
 
-    const originalStream = result.stream
-    const originalReader = originalStream.getReader()
-
-    const wrappedStream = new ReadableStream({
+    const stream$ = new ReadableStream({
       async pull(controller) {
         try {
-          const { done, value } = await originalReader.read()
+          const { done, value } = await reader.read()
           if (done) {
-            const contentToSave = USE_SDK ? capturedContent : fullStreamedContent
-            if (contentToSave) {
-              entryRef.messages.push({ role: 'assistant', content: contentToSave })
+            if (fullContent) {
+              entryRef.messages.push({ role: 'assistant', content: fullContent })
               entryRef.lastAccessed = Date.now()
               conversations.set(sessionKeyRef, entryRef)
             }
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
             controller.close()
             return
           }
 
-          if (!USE_SDK) {
-            const text = new TextDecoder().decode(value)
-            const lines = text.split('\n')
-            for (const line of lines) {
-              const trimmed = line.trim()
-              if (!trimmed.startsWith('data: ')) continue
-              const data = trimmed.slice(6).trim()
-              if (!data || data === '[DONE]') continue
-              try {
-                const parsed = JSON.parse(data)
-                if (parsed.content) {
-                  fullStreamedContent += parsed.content
-                }
-              } catch { /* ignore */ }
-            }
-          }
+          sseBuffer += decoder.decode(value, { stream: true })
+          const lines = sseBuffer.split('\n')
+          sseBuffer = lines.pop() || ''
 
-          controller.enqueue(value)
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed || !trimmed.startsWith('data: ')) continue
+            const data = trimmed.slice(6).trim()
+            if (!data || data === '[DONE]') continue
+
+            try {
+              const parsed = JSON.parse(data)
+              const delta = parsed.choices?.[0]?.delta?.content
+              if (delta) {
+                fullContent += delta
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`))
+              }
+            } catch { /* ignore incomplete JSON */ }
+          }
         } catch (err) {
-          console.error('Wrapped stream error:', err)
-          const contentToSave = USE_SDK ? capturedContent : fullStreamedContent
-          if (contentToSave) {
-            entryRef.messages.push({ role: 'assistant', content: contentToSave })
+          console.error('Stream read error:', err)
+          if (fullContent) {
+            entryRef.messages.push({ role: 'assistant', content: fullContent })
             entryRef.lastAccessed = Date.now()
             conversations.set(sessionKeyRef, entryRef)
           }
@@ -400,11 +243,11 @@ export async function POST(request: NextRequest) {
         }
       },
       cancel() {
-        try { originalReader.cancel() } catch { /* ignore */ }
+        reader.cancel()
       },
     })
 
-    return new Response(wrappedStream, {
+    return new Response(stream$, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',

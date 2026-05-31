@@ -89,16 +89,10 @@ import {
   Space,
   Workflow,
   AlertCircle,
-  Crop,
-  Lock,
-  Unlock,
-  Trash2,
-  RefreshCcw,
+  Eye,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { AIChatbot } from '@/components/chat/ai-chatbot'
-import Cropper from 'react-easy-crop'
-import type { Area } from 'react-easy-crop'
 
 // Font families available for selection
 const FONT_FAMILIES = [
@@ -157,7 +151,7 @@ const LAYOUT_TEMPLATES = [
 ]
 
 export function EditorPage() {
-  const { documents, orgDocuments, activeDocumentId, activeOrgId, setCurrentView, updateDocument, setActiveDocumentId, fetchDocuments } = useAppStore()
+  const { documents, orgDocuments, activeDocumentId, activeOrgId, organizations, setCurrentView, updateDocument, setActiveDocumentId, fetchDocuments } = useAppStore()
   const [title, setTitle] = useState('Untitled Document')
   const [isSaving, setIsSaving] = useState(false)
   const [lastSaved, setLastSaved] = useState<string | null>(null)
@@ -171,20 +165,6 @@ export function EditorPage() {
   const [isEraser, setIsEraser] = useState(false)
   const [fetchedContent, setFetchedContent] = useState<string | null>(null)
 
-  // Image edit dialog state
-  const [imageEditOpen, setImageEditOpen] = useState(false)
-  const [editingImageSrc, setEditingImageSrc] = useState('')
-  const [editingImageElement, setEditingImageElement] = useState<HTMLImageElement | null>(null)
-  const [cropArea, setCropArea] = useState({ x: 0, y: 0 })
-  const [cropZoom, setCropZoom] = useState(1)
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null)
-  const [cropAspect, setCropAspect] = useState<number | undefined>(undefined)
-  const [resizeWidth, setResizeWidth] = useState(0)
-  const [resizeHeight, setResizeHeight] = useState(0)
-  const [resizeLockAspect, setResizeLockAspect] = useState(true)
-  const [imageEditTab, setImageEditTab] = useState<'crop' | 'resize'>('crop')
-  const [originalImageDimensions, setOriginalImageDimensions] = useState({ width: 0, height: 0 })
-
   const editorRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeDocumentIdRef = useRef(activeDocumentId)
@@ -195,6 +175,12 @@ export function EditorPage() {
   const lastPosRef = useRef({ x: 0, y: 0 })
 
   const activeDocument = documents.find((d) => d.id === activeDocumentId) || orgDocuments.find((d) => d.id === activeDocumentId)
+
+  // ─── Role-based read-only check ─────────────────────────────
+  // If the document belongs to an org and the user is a viewer, make the editor read-only
+  const activeOrg = organizations.find((o) => o.id === activeOrgId) || null
+  const userOrgRole = activeOrg?.role ?? null
+  const isViewer = activeOrgId && userOrgRole === 'viewer'
 
   // Keep refs in sync
   useEffect(() => {
@@ -231,11 +217,28 @@ export function EditorPage() {
       const wrapper = document.createElement('div')
       wrapper.className = 'umair-img-wrapper'
       wrapper.setAttribute('contenteditable', 'false')
-      wrapper.style.cssText = 'position: relative; display: inline-block; margin: 8px 0; max-width: 100%; cursor: move;'
+      wrapper.setAttribute('data-align', 'center')
+      wrapper.style.cssText = 'position: relative; display: block; margin: 8px auto; max-width: 100%; cursor: move;'
 
-      const handle = document.createElement('div')
-      handle.className = 'umair-img-resize-handle'
-      handle.style.cssText = 'position: absolute; bottom: -4px; right: -4px; width: 12px; height: 12px; background: #7c3aed; border-radius: 2px; cursor: nwse-resize;'
+      // Alignment toolbar
+      const alignToolbar = document.createElement('div')
+      alignToolbar.className = 'umair-img-align-toolbar'
+      const alignOptions = [
+        { align: 'left', title: 'Align Left', label: '⇠' },
+        { align: 'center', title: 'Center', label: '⬌' },
+        { align: 'right', title: 'Align Right', label: '⇢' },
+        { align: 'float-left', title: 'Float Left', label: '⊞' },
+        { align: 'float-right', title: 'Float Right', label: '⊞' },
+      ]
+      alignOptions.forEach(opt => {
+        const btn = document.createElement('button')
+        btn.className = 'umair-align-btn' + (opt.align === 'center' ? ' umair-align-active' : '')
+        btn.setAttribute('data-align', opt.align)
+        btn.setAttribute('title', opt.title)
+        btn.textContent = opt.label
+        alignToolbar.appendChild(btn)
+      })
+      wrapper.appendChild(alignToolbar)
 
       const imgEl = img as HTMLImageElement
       // Reset image styles for wrapper context
@@ -247,7 +250,105 @@ export function EditorPage() {
 
       img.parentNode?.insertBefore(wrapper, img)
       wrapper.appendChild(img)
-      wrapper.appendChild(handle)
+
+      // 4 corner resize handles
+      const corners = [
+        { cls: 'umair-img-resize-tl', style: 'position: absolute; top: -5px; left: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: nw-resize;' },
+        { cls: 'umair-img-resize-tr', style: 'position: absolute; top: -5px; right: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: ne-resize;' },
+        { cls: 'umair-img-resize-bl', style: 'position: absolute; bottom: -5px; left: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: sw-resize;' },
+        { cls: 'umair-img-resize-br', style: 'position: absolute; bottom: -5px; right: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: se-resize;' },
+      ]
+      corners.forEach(c => {
+        const handle = document.createElement('div')
+        handle.className = c.cls
+        handle.style.cssText = c.style
+        wrapper.appendChild(handle)
+      })
+
+      // Drag indicator
+      const dragIndicator = document.createElement('div')
+      dragIndicator.className = 'umair-img-drag-indicator'
+      dragIndicator.textContent = 'Drag to reposition'
+      wrapper.appendChild(dragIndicator)
+    })
+  }, [])
+
+  // Migrate old-style image wrappers (single resize handle) to new 4-corner format
+  const migrateOldWrappers = useCallback(() => {
+    if (!editorRef.current) return
+    const oldWrappers = editorRef.current.querySelectorAll('.umair-img-wrapper')
+    oldWrappers.forEach((wrapper) => {
+      const wrapperEl = wrapper as HTMLElement
+      // Check if this wrapper still has the old single resize handle
+      const oldHandle = wrapperEl.querySelector('.umair-img-resize-handle')
+      if (oldHandle) {
+        // Remove the old handle
+        oldHandle.remove()
+
+        // Remove old transform-based positioning
+        wrapperEl.style.transform = ''
+
+        // Add data-align attribute if missing
+        if (!wrapperEl.getAttribute('data-align')) {
+          wrapperEl.setAttribute('data-align', 'center')
+        }
+
+        // Update wrapper style to new format
+        wrapperEl.style.cssText = 'position: relative; display: block; margin: 8px auto; max-width: 100%; cursor: move;'
+
+        // Add alignment toolbar if missing
+        if (!wrapperEl.querySelector('.umair-img-align-toolbar')) {
+          const alignToolbar = document.createElement('div')
+          alignToolbar.className = 'umair-img-align-toolbar'
+          const alignOptions = [
+            { align: 'left', title: 'Align Left', label: '⇠' },
+            { align: 'center', title: 'Center', label: '⬌' },
+            { align: 'right', title: 'Align Right', label: '⇢' },
+            { align: 'float-left', title: 'Float Left', label: '⊞' },
+            { align: 'float-right', title: 'Float Right', label: '⊞' },
+          ]
+          alignOptions.forEach(opt => {
+            const btn = document.createElement('button')
+            btn.className = 'umair-align-btn' + (opt.align === 'center' ? ' umair-align-active' : '')
+            btn.setAttribute('data-align', opt.align)
+            btn.setAttribute('title', opt.title)
+            btn.textContent = opt.label
+            alignToolbar.appendChild(btn)
+          })
+          // Insert before the image
+          const img = wrapperEl.querySelector('img')
+          if (img) {
+            wrapperEl.insertBefore(alignToolbar, img)
+          } else {
+            wrapperEl.appendChild(alignToolbar)
+          }
+        }
+
+        // Add 4 corner resize handles if missing
+        const existingCorners = wrapperEl.querySelectorAll('[class^="umair-img-resize"]')
+        if (existingCorners.length === 0) {
+          const corners = [
+            { cls: 'umair-img-resize-tl', style: 'position: absolute; top: -5px; left: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: nw-resize;' },
+            { cls: 'umair-img-resize-tr', style: 'position: absolute; top: -5px; right: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: ne-resize;' },
+            { cls: 'umair-img-resize-bl', style: 'position: absolute; bottom: -5px; left: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: sw-resize;' },
+            { cls: 'umair-img-resize-br', style: 'position: absolute; bottom: -5px; right: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: se-resize;' },
+          ]
+          corners.forEach(c => {
+            const handle = document.createElement('div')
+            handle.className = c.cls
+            handle.style.cssText = c.style
+            wrapperEl.appendChild(handle)
+          })
+        }
+
+        // Add drag indicator if missing
+        if (!wrapperEl.querySelector('.umair-img-drag-indicator')) {
+          const dragIndicator = document.createElement('div')
+          dragIndicator.className = 'umair-img-drag-indicator'
+          dragIndicator.textContent = 'Drag to reposition'
+          wrapperEl.appendChild(dragIndicator)
+        }
+      }
     })
   }, [])
 
@@ -259,25 +360,73 @@ export function EditorPage() {
       setTimeout(() => {
         if (editorRef.current) {
           editorRef.current.innerHTML = fetchedContent
+          // Migrate old-style wrappers to new format
+          migrateOldWrappers()
           // Wrap any existing bare images in draggable wrappers
           wrapExistingImages()
           setIsReady(true)
         }
       }, 0)
     }
-  }, [fetchedContent, isReady, wrapExistingImages])
+  }, [fetchedContent, isReady, wrapExistingImages, migrateOldWrappers])
 
-  // Delegated event listener for image drag and resize
+  // Delegated event listener for image drag, resize, and alignment
   useEffect(() => {
     if (!isReady || !editorRef.current) return
 
     const editor = editorRef.current
 
+    // Helper: apply alignment styles to a wrapper
+    const applyAlignment = (wrapper: HTMLElement, align: string) => {
+      wrapper.setAttribute('data-align', align)
+      // Update active button in toolbar
+      const buttons = wrapper.querySelectorAll('.umair-align-btn')
+      buttons.forEach(btn => {
+        const btnAlign = btn.getAttribute('data-align')
+        if (btnAlign === align) {
+          btn.classList.add('umair-align-active')
+        } else {
+          btn.classList.remove('umair-align-active')
+        }
+      })
+      // Apply CSS styles based on alignment
+      switch (align) {
+        case 'left':
+          wrapper.style.cssText = 'position: relative; display: block; margin: 8px 0; max-width: 100%; cursor: move; float: none; margin-left: 0; margin-right: auto;'
+          break
+        case 'center':
+          wrapper.style.cssText = 'position: relative; display: block; margin: 8px auto; max-width: 100%; cursor: move; float: none;'
+          break
+        case 'right':
+          wrapper.style.cssText = 'position: relative; display: block; margin: 8px 0; max-width: 100%; cursor: move; float: none; margin-left: auto; margin-right: 0;'
+          break
+        case 'float-left':
+          wrapper.style.cssText = 'position: relative; display: block; margin: 8px 16px 8px 0; max-width: 50%; cursor: move; float: left;'
+          break
+        case 'float-right':
+          wrapper.style.cssText = 'position: relative; display: block; margin: 8px 0 8px 16px; max-width: 50%; cursor: move; float: right;'
+          break
+      }
+    }
+
     const handleMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement
 
-      // Check if clicking on resize handle
-      const resizeHandle = target.closest('.umair-img-resize-handle')
+      // Handle alignment toolbar button clicks
+      const alignBtn = target.closest('.umair-align-btn')
+      if (alignBtn) {
+        e.preventDefault()
+        e.stopPropagation()
+        const wrapper = alignBtn.closest('.umair-img-wrapper') as HTMLElement
+        if (!wrapper) return
+        const align = (alignBtn as HTMLElement).getAttribute('data-align') || 'center'
+        applyAlignment(wrapper, align)
+        handleContentChange()
+        return
+      }
+
+      // Check if clicking on a resize handle (any of the 4 corners)
+      const resizeHandle = target.closest('[class^="umair-img-resize"]')
       if (resizeHandle) {
         e.preventDefault()
         e.stopPropagation()
@@ -285,20 +434,42 @@ export function EditorPage() {
         const img = wrapper.querySelector('img') as HTMLImageElement
         if (!img) return
 
+        // Mark wrapper as selected
+        wrapper.classList.add('umair-img-selected')
+
+        const handleClass = resizeHandle.className
         const startX = e.clientX
+        const startY = e.clientY
         const startWidth = img.offsetWidth
+        const startHeight = img.offsetHeight
+        const aspectRatio = startWidth / startHeight
+        const startWrapperLeft = wrapper.getBoundingClientRect().left
 
         const handleMouseMove = (me: MouseEvent) => {
-          const diff = me.clientX - startX
-          const newWidth = Math.max(50, startWidth + diff)
+          const diffX = me.clientX - startX
+
+          let newWidth: number
+          if (handleClass === 'umair-img-resize-br' || handleClass === 'umair-img-resize-tr') {
+            // BR and TR: dragging right increases width
+            newWidth = Math.max(50, startWidth + diffX)
+          } else {
+            // BL and TL: dragging left increases width (diffX is negative when dragging left)
+            newWidth = Math.max(50, startWidth - diffX)
+          }
+
+          const newHeight = newWidth / aspectRatio
           img.style.width = newWidth + 'px'
           img.style.maxWidth = 'none'
-          img.style.height = 'auto'
+          img.style.height = newHeight + 'px'
         }
 
         const handleMouseUp = () => {
           document.removeEventListener('mousemove', handleMouseMove)
           document.removeEventListener('mouseup', handleMouseUp)
+          // Remove selected state after a short delay
+          setTimeout(() => {
+            wrapper.classList.remove('umair-img-selected')
+          }, 100)
           handleContentChange()
         }
 
@@ -309,28 +480,60 @@ export function EditorPage() {
 
       // Check if clicking on image wrapper for drag
       const wrapper = target.closest('.umair-img-wrapper') as HTMLElement
-      if (wrapper && !resizeHandle) {
+      if (wrapper) {
         e.preventDefault()
-        const startX = e.clientX
-        const startY = e.clientY
+        // Mark wrapper as selected
+        wrapper.classList.add('umair-img-selected')
 
-        // Get current transform
-        const currentTransform = wrapper.style.transform || ''
-        const matchX = currentTransform.match(/translateX\(([-\d.]+)px\)/)
-        const matchY = currentTransform.match(/translateY\(([-\d.]+)px\)/)
-        const offsetX = matchX ? parseFloat(matchX[1]) : 0
-        const offsetY = matchY ? parseFloat(matchY[1]) : 0
+        const dragIndicator = wrapper.querySelector('.umair-img-drag-indicator')
+        const startX = e.clientX
+        const editorRect = editor.getBoundingClientRect()
+        const editorWidth = editorRect.width
+        let hasMoved = false
 
         const handleMouseMove = (me: MouseEvent) => {
-          const diffX = me.clientX - startX + offsetX
-          const diffY = me.clientY - startY + offsetY
-          wrapper.style.transform = `translateX(${diffX}px) translateY(${diffY}px)`
+          const diffX = me.clientX - startX
+          if (Math.abs(diffX) < 5 && !hasMoved) return
+          hasMoved = true
+
+          // Show drag indicator
+          if (dragIndicator) {
+            dragIndicator.classList.add('umair-drag-visible')
+          }
+
+          // Determine which zone of the editor the cursor is in
+          const cursorRelativeX = me.clientX - editorRect.left
+          const third = editorWidth / 3
+
+          if (cursorRelativeX < third) {
+            // Left third
+            if (dragIndicator) dragIndicator.textContent = '↤ Align Left'
+            applyAlignment(wrapper, 'left')
+          } else if (cursorRelativeX < third * 2) {
+            // Center third
+            if (dragIndicator) dragIndicator.textContent = '⬌ Center'
+            applyAlignment(wrapper, 'center')
+          } else {
+            // Right third
+            if (dragIndicator) dragIndicator.textContent = 'Align Right ↦'
+            applyAlignment(wrapper, 'right')
+          }
         }
 
         const handleMouseUp = () => {
           document.removeEventListener('mousemove', handleMouseMove)
           document.removeEventListener('mouseup', handleMouseUp)
-          handleContentChange()
+          // Hide drag indicator
+          if (dragIndicator) {
+            dragIndicator.classList.remove('umair-drag-visible')
+          }
+          // Remove selected state after a short delay
+          setTimeout(() => {
+            wrapper.classList.remove('umair-img-selected')
+          }, 300)
+          if (hasMoved) {
+            handleContentChange()
+          }
         }
 
         document.addEventListener('mousemove', handleMouseMove)
@@ -338,37 +541,24 @@ export function EditorPage() {
       }
     }
 
-    editor.addEventListener('mousedown', handleMouseDown)
-    return () => editor.removeEventListener('mousedown', handleMouseDown)
-  }, [isReady])
-
-  // Double-click on image opens edit dialog
-  useEffect(() => {
-    if (!isReady || !editorRef.current) return
-    const editor = editorRef.current
-
-    const handleDoubleClick = (e: MouseEvent) => {
+    // Also handle clicks outside image wrappers to deselect
+    const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement
-      const img = target.closest('.umair-img-wrapper img') as HTMLImageElement | null
-      if (!img) return
-
-      e.preventDefault()
-      setEditingImageElement(img)
-      setEditingImageSrc(img.src)
-      setResizeWidth(img.naturalWidth)
-      setResizeHeight(img.naturalHeight)
-      setOriginalImageDimensions({ width: img.naturalWidth, height: img.naturalHeight })
-      setCropArea({ x: 0, y: 0 })
-      setCropZoom(1)
-      setCroppedAreaPixels(null)
-      setCropAspect(undefined)
-      setImageEditTab('crop')
-      setResizeLockAspect(true)
-      setImageEditOpen(true)
+      const clickedWrapper = target.closest('.umair-img-wrapper')
+      if (!clickedWrapper) {
+        // Deselect all image wrappers
+        editor.querySelectorAll('.umair-img-wrapper.umair-img-selected').forEach(w => {
+          w.classList.remove('umair-img-selected')
+        })
+      }
     }
 
-    editor.addEventListener('dblclick', handleDoubleClick)
-    return () => editor.removeEventListener('dblclick', handleDoubleClick)
+    editor.addEventListener('mousedown', handleMouseDown)
+    editor.addEventListener('click', handleClick)
+    return () => {
+      editor.removeEventListener('mousedown', handleMouseDown)
+      editor.removeEventListener('click', handleClick)
+    }
   }, [isReady])
 
   // Fetch documents list if not yet loaded (for sidebar/metadata)
@@ -509,9 +699,9 @@ export function EditorPage() {
   const handleInsertImage = (src: string) => {
     // Escape any quotes in the src to prevent HTML injection
     const escapedSrc = src.replace(/"/g, '&quot;')
-    const imgHTML = `<div class="umair-img-wrapper" contenteditable="false" style="position: relative; display: inline-block; margin: 8px 0; max-width: 100%; cursor: move;"><img src="${escapedSrc}" style="max-width: 100%; height: auto; border-radius: 8px; display: block;" /><div class="umair-img-resize-handle" style="position: absolute; bottom: -4px; right: -4px; width: 12px; height: 12px; background: #7c3aed; border-radius: 2px; cursor: nwse-resize;"></div></div>`
+    const imgHTML = `<div class="umair-img-wrapper" contenteditable="false" data-align="center" style="position: relative; display: block; margin: 8px auto; max-width: 100%; cursor: move;"><div class="umair-img-align-toolbar"><button class="umair-align-btn" data-align="left" title="Align Left">⇠</button><button class="umair-align-btn umair-align-active" data-align="center" title="Center">⬌</button><button class="umair-align-btn" data-align="right" title="Align Right">⇢</button><button class="umair-align-btn" data-align="float-left" title="Float Left">⊞</button><button class="umair-align-btn" data-align="float-right" title="Float Right">⊞</button></div><img src="${escapedSrc}" style="max-width: 100%; height: auto; border-radius: 8px; display: block;" /><div class="umair-img-resize-tl" style="position: absolute; top: -5px; left: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: nw-resize;"></div><div class="umair-img-resize-tr" style="position: absolute; top: -5px; right: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: ne-resize;"></div><div class="umair-img-resize-bl" style="position: absolute; bottom: -5px; left: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: sw-resize;"></div><div class="umair-img-resize-br" style="position: absolute; bottom: -5px; right: -5px; width: 10px; height: 10px; background: #7c3aed; border-radius: 50%; cursor: se-resize;"></div><div class="umair-img-drag-indicator">Drag to reposition</div></div>`
     insertHTMLAtCursor(imgHTML)
-    toast({ title: 'Image added', description: 'Drag to move, double-click to crop/edit' })
+    toast({ title: 'Image added', description: 'Drag to reposition, drag corners to resize' })
   }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -571,137 +761,6 @@ export function EditorPage() {
   const handleImageUrl = () => {
     const url = prompt('Enter image URL:')
     if (url) handleInsertImage(url)
-  }
-
-  // ─── Image Crop ──────────────────────────────────────────────
-  const onCropComplete = useCallback((_croppedArea: Area, croppedAreaPx: Area) => {
-    setCroppedAreaPixels(croppedAreaPx)
-  }, [])
-
-  const applyCrop = useCallback(async () => {
-    if (!editingImageElement || !croppedAreaPixels) return
-
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = editingImageSrc
-
-    await new Promise<void>(resolve => { img.onload = () => resolve() })
-
-    const canvas = document.createElement('canvas')
-    canvas.width = croppedAreaPixels.width
-    canvas.height = croppedAreaPixels.height
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    ctx.drawImage(
-      img,
-      croppedAreaPixels.x, croppedAreaPixels.y,
-      croppedAreaPixels.width, croppedAreaPixels.height,
-      0, 0,
-      croppedAreaPixels.width, croppedAreaPixels.height
-    )
-
-    const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9)
-    editingImageElement.src = croppedDataUrl
-    handleContentChange()
-    setImageEditOpen(false)
-    toast({ title: 'Image cropped', description: 'Crop applied successfully' })
-  }, [editingImageElement, croppedAreaPixels, editingImageSrc])
-
-  // ─── Image Resize ────────────────────────────────────────────
-  const applyResize = useCallback(() => {
-    if (!editingImageElement || resizeWidth <= 0 || resizeHeight <= 0) return
-
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = editingImageSrc
-
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = resizeWidth
-      canvas.height = resizeHeight
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      ctx.drawImage(img, 0, 0, resizeWidth, resizeHeight)
-      const resizedDataUrl = canvas.toDataURL('image/jpeg', 0.9)
-
-      editingImageElement.src = resizedDataUrl
-      editingImageElement.style.width = resizeWidth + 'px'
-      editingImageElement.style.height = resizeHeight + 'px'
-      handleContentChange()
-      setImageEditOpen(false)
-      toast({ title: 'Image resized', description: 'Resize applied successfully' })
-    }
-  }, [editingImageElement, resizeWidth, resizeHeight, editingImageSrc])
-
-  const handleResizeWidthChange = (newWidth: number) => {
-    setResizeWidth(newWidth)
-    if (resizeLockAspect && originalImageDimensions.width > 0) {
-      setResizeHeight(Math.round((newWidth / originalImageDimensions.width) * originalImageDimensions.height))
-    }
-  }
-
-  const handleResizeHeightChange = (newHeight: number) => {
-    setResizeHeight(newHeight)
-    if (resizeLockAspect && originalImageDimensions.height > 0) {
-      setResizeWidth(Math.round((newHeight / originalImageDimensions.height) * originalImageDimensions.width))
-    }
-  }
-
-  const handleReplaceImage = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !editingImageElement) return
-    if (!file.type.startsWith('image/')) {
-      toast({ title: 'Invalid file', description: 'Please select an image file', variant: 'destructive' })
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string
-      if (!dataUrl) return
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        canvas.width = img.width
-        canvas.height = img.height
-        const ctx = canvas.getContext('2d')
-        if (ctx) {
-          ctx.drawImage(img, 0, 0)
-          const compressed = canvas.toDataURL('image/jpeg', 0.8)
-          editingImageElement.src = compressed
-          handleContentChange()
-          setEditingImageSrc(compressed)
-          setResizeWidth(img.width)
-          setResizeHeight(img.height)
-          setOriginalImageDimensions({ width: img.width, height: img.height })
-          toast({ title: 'Image replaced', description: 'New image applied' })
-        }
-      }
-      img.src = dataUrl
-    }
-    reader.readAsDataURL(file)
-    e.target.value = ''
-  }
-
-  const handleDeleteImage = () => {
-    if (!editingImageElement) return
-    const wrapper = editingImageElement.closest('.umair-img-wrapper')
-    if (wrapper) {
-      wrapper.remove()
-    } else {
-      editingImageElement.remove()
-    }
-    handleContentChange()
-    setImageEditOpen(false)
-    toast({ title: 'Image deleted', description: 'Image removed from document' })
-  }
-
-  const applyResizePreset = (percent: number) => {
-    const newW = Math.round(originalImageDimensions.width * (percent / 100))
-    const newH = Math.round(originalImageDimensions.height * (percent / 100))
-    setResizeWidth(newW)
-    setResizeHeight(newH)
   }
 
   // Table insertion
@@ -1407,6 +1466,23 @@ export function EditorPage() {
             </div>
           </div>
         )}
+
+        {/* Read-only banner for viewers */}
+        {isViewer && isReady && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-4xl mx-auto mb-4"
+            style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
+          >
+            <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-2.5 text-sm text-amber-700 dark:text-amber-300">
+              <Eye className="w-4 h-4 shrink-0" />
+              <span className="font-medium">Read-only mode</span>
+              <span className="text-amber-600 dark:text-amber-400">— You are a viewer in this organization. Editing is disabled.</span>
+            </div>
+          </motion.div>
+        )}
+
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: isReady ? 1 : 0, y: isReady ? 0 : 20 }}
@@ -1415,11 +1491,11 @@ export function EditorPage() {
           style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
         >
           <div
-            className="bg-card dark:bg-card rounded-xl shadow-sm border border-border/60 min-h-[calc(100vh-200px)] p-12 md:p-16 focus:outline-none prose prose-slate prose-lg max-w-none dark:prose-invert [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_img]:my-4 [&_img]:block"
+            className={`bg-card dark:bg-card rounded-xl shadow-sm border border-border/60 min-h-[calc(100vh-200px)] p-12 md:p-16 focus:outline-none prose prose-slate prose-lg max-w-none dark:prose-invert [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-lg [&_img]:my-4 [&_img]:block ${isViewer ? 'cursor-default select-text' : ''}`}
             ref={editorRef}
-            contentEditable
+            contentEditable={!isViewer}
             suppressContentEditableWarning
-            onInput={handleContentChange}
+            onInput={isViewer ? undefined : handleContentChange}
             data-placeholder="Start typing your document..."
             style={{
               lineHeight: '1.8',
@@ -1458,166 +1534,6 @@ export function EditorPage() {
           </div>
         </div>
       </motion.footer>
-
-      {/* Image Edit Dialog */}
-      <Dialog open={imageEditOpen} onOpenChange={(open) => { if (!open) setImageEditOpen(false) }}>
-        <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Crop className="w-5 h-5 text-purple-600" />
-              Edit Image
-            </DialogTitle>
-          </DialogHeader>
-
-          {/* Tab Switcher */}
-          <div className="flex gap-2 border-b border-border pb-2">
-            <button
-              className={`px-4 py-1.5 text-sm font-medium rounded-t-lg transition-colors ${imageEditTab === 'crop' ? 'bg-purple-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-              onClick={() => setImageEditTab('crop')}
-            >
-              <Crop className="w-4 h-4 inline mr-1" /> Crop
-            </button>
-            <button
-              className={`px-4 py-1.5 text-sm font-medium rounded-t-lg transition-colors ${imageEditTab === 'resize' ? 'bg-purple-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-              onClick={() => setImageEditTab('resize')}
-            >
-              <RefreshCcw className="w-4 h-4 inline mr-1" /> Resize
-            </button>
-          </div>
-
-          {imageEditTab === 'crop' ? (
-            <div className="space-y-3">
-              {/* Cropper */}
-              <div className="relative w-full h-[300px] bg-black rounded-lg overflow-hidden">
-                <Cropper
-                  image={editingImageSrc}
-                  crop={cropArea}
-                  zoom={cropZoom}
-                  aspect={cropAspect}
-                  onCropChange={setCropArea}
-                  onZoomChange={setCropZoom}
-                  onCropComplete={onCropComplete}
-                />
-              </div>
-
-              {/* Zoom Slider */}
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground w-10">Zoom</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={3}
-                  step={0.1}
-                  value={cropZoom}
-                  onChange={(e) => setCropZoom(Number(e.target.value))}
-                  className="flex-1 accent-purple-600"
-                />
-                <span className="text-xs text-muted-foreground w-8">{cropZoom.toFixed(1)}x</span>
-              </div>
-
-              {/* Aspect Ratio Presets */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Ratio:</span>
-                {[
-                  { label: 'Free', value: undefined },
-                  { label: '1:1', value: 1 },
-                  { label: '4:3', value: 4 / 3 },
-                  { label: '16:9', value: 16 / 9 },
-                  { label: '3:2', value: 3 / 2 },
-                ].map((preset) => (
-                  <button
-                    key={preset.label}
-                    onClick={() => setCropAspect(preset.value)}
-                    className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${cropAspect === preset.value ? 'border-purple-500 bg-purple-500/10 text-purple-600' : 'border-border hover:border-purple-300'}`}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-
-              <Button className="w-full" onClick={applyCrop} disabled={!croppedAreaPixels}>
-                <Crop className="w-4 h-4 mr-1" /> Apply Crop
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Width / Height */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <label className="text-xs text-muted-foreground">Width (px)</label>
-                  <Input
-                    type="number"
-                    value={resizeWidth}
-                    onChange={(e) => handleResizeWidthChange(Number(e.target.value))}
-                    min={1}
-                    className="h-8"
-                  />
-                </div>
-                <button
-                  onClick={() => setResizeLockAspect(!resizeLockAspect)}
-                  className="mt-5 p-1.5 rounded-md hover:bg-muted transition-colors"
-                  title={resizeLockAspect ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
-                >
-                  {resizeLockAspect ? <Lock className="w-4 h-4 text-purple-600" /> : <Unlock className="w-4 h-4 text-muted-foreground" />}
-                </button>
-                <div className="flex-1">
-                  <label className="text-xs text-muted-foreground">Height (px)</label>
-                  <Input
-                    type="number"
-                    value={resizeHeight}
-                    onChange={(e) => handleResizeHeightChange(Number(e.target.value))}
-                    min={1}
-                    className="h-8"
-                  />
-                </div>
-              </div>
-
-              {/* Percentage Presets */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Presets:</span>
-                {[
-                  { label: '25%', value: 25 },
-                  { label: '50%', value: 50 },
-                  { label: '75%', value: 75 },
-                  { label: '100%', value: 100 },
-                ].map((preset) => (
-                  <button
-                    key={preset.label}
-                    onClick={() => applyResizePreset(preset.value)}
-                    className="px-2.5 py-1 text-xs rounded-md border border-border hover:border-purple-300 hover:bg-purple-500/10 transition-colors"
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-
-              <p className="text-[11px] text-muted-foreground">
-                Original: {originalImageDimensions.width} × {originalImageDimensions.height} → New: {resizeWidth} × {resizeHeight}
-              </p>
-
-              <Button className="w-full" onClick={applyResize} disabled={resizeWidth <= 0 || resizeHeight <= 0}>
-                <RefreshCcw className="w-4 h-4 mr-1" /> Apply Resize
-              </Button>
-            </div>
-          )}
-
-          {/* Bottom actions */}
-          <div className="flex items-center justify-between border-t border-border pt-3 mt-2">
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border hover:bg-muted cursor-pointer text-xs transition-colors">
-                <ImagePlus className="w-3.5 h-3.5" /> Replace
-                <input type="file" accept="image/*" className="hidden" onChange={handleReplaceImage} />
-              </label>
-              <Button variant="outline" size="sm" className="text-xs text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleDeleteImage}>
-                <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
-              </Button>
-            </div>
-            <Button variant="outline" size="sm" className="text-xs" onClick={() => setImageEditOpen(false)}>
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

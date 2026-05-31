@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/auth'
+import { authenticateOrgRequest } from '@/lib/org-permissions'
 
 export async function GET(
   request: NextRequest,
@@ -43,11 +44,24 @@ export async function POST(
 ) {
   try {
     const { id } = await params
+
+    // Permission check: only admin can add members directly
+    const auth = await authenticateOrgRequest(request, id, 'admin')
+    if ('error' in auth) return auth.error
+
     const { email, role } = await request.json()
 
     if (!email) {
       return NextResponse.json(
         { success: false, error: 'Email is required' },
+        { status: 400 }
+      )
+    }
+
+    // Only member or viewer roles can be assigned; admin role is reserved
+    if (role && !['member', 'viewer'].includes(role)) {
+      return NextResponse.json(
+        { success: false, error: 'Only "member" or "viewer" roles can be assigned' },
         { status: 400 }
       )
     }
@@ -86,7 +100,7 @@ export async function POST(
       data: {
         orgId: id,
         userId: user.id,
-        role: role || 'member',
+        role: role || 'viewer',
       },
       include: {
         user: {

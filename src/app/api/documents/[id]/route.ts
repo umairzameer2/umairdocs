@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getUserOrgRole, CAN_EDIT_ROLES, CAN_DELETE_ROLES } from '@/lib/permissions'
 
 export async function GET(
   request: NextRequest,
@@ -62,12 +63,51 @@ export async function PATCH(
       )
     }
 
-        // Extract _userId before passing data to Prisma (it's not a Document field)
-    const _userId = rawData._userId as string | undefined
-    const { _userId: _, ...updateData } = rawData
+    // Extract _userId before passing data to Prisma (it's not a Document field)
+    const { _userId, ...updateData } = rawData
+    const userId = typeof _userId === 'string' ? _userId : ''
 
-    // Get the old document for change tracking
+    // Get the old document for change tracking and permission check
     const oldDoc = await db.document.findUnique({ where: { id } })
+    if (!oldDoc) {
+      return NextResponse.json(
+        { success: false, error: 'Document not found' },
+        { status: 404 }
+      )
+    }
+
+    // ── Role-based permission check for editing ──
+    // Org docs: viewers cannot edit. Admins/members can.
+    // Personal docs: only the author can edit.
+    if (oldDoc.organizationId) {
+      if (!userId) {
+        return NextResponse.json(
+          { success: false, error: 'User ID is required to edit organization documents' },
+          { status: 401 }
+        )
+      }
+      const role = await getUserOrgRole(userId, oldDoc.organizationId)
+      if (!role) {
+        return NextResponse.json(
+          { success: false, error: 'You are not a member of this organization' },
+          { status: 403 }
+        )
+      }
+      if (!CAN_EDIT_ROLES.has(role)) {
+        return NextResponse.json(
+          { success: false, error: 'Viewers cannot edit documents in this organization' },
+          { status: 403 }
+        )
+      }
+    } else {
+      // Personal document — only the author can edit
+      if (!userId || userId !== oldDoc.authorId) {
+        return NextResponse.json(
+          { success: false, error: 'Only the author can edit this document' },
+          { status: 403 }
+        )
+      }
+    }
 
     const document = await db.document.update({
       where: { id },
@@ -75,15 +115,16 @@ export async function PATCH(
     })
 
     // Log changes if userId is provided
-    if (_userId && oldDoc) {
+    if (userId && oldDoc) {
       const changes: Array<{ action: string; description: string; oldValue?: string; newValue?: string }> = []
 
       if (updateData.title && updateData.title !== oldDoc.title) {
+        const newTitle = String(updateData.title)
         changes.push({
           action: 'rename',
-          description: `Renamed document from "${oldDoc.title}" to "${updateData.title}"`,
+          description: `Renamed document from "${oldDoc.title}" to "${newTitle}"`,
           oldValue: oldDoc.title,
-                    newValue: updateData.title as string,
+          newValue: newTitle,
         })
       }
 
@@ -91,8 +132,6 @@ export async function PATCH(
         changes.push({
           action: 'edit',
           description: `Edited content of "${document.title}"`,
-          oldValue: oldDoc.content,
-          newValue: updateData.content as string,
         })
       }
 
@@ -115,7 +154,7 @@ export async function PATCH(
         await db.changeTrack.create({
           data: {
             documentId: id,
-            userId: _userId,
+            userId: userId,
             action: change.action,
             description: change.description,
             oldValue: change.oldValue || null,
@@ -156,6 +195,40 @@ export async function DELETE(
         { success: false, error: 'Document not found' },
         { status: 404 }
       )
+    }
+
+    // ── Role-based permission check for deletion ──
+    // Org docs: only admin can delete. Members/viewers cannot.
+    // Personal docs: only the author can delete.
+    const userId = request.nextUrl.searchParams.get('userId')
+    if (doc.organizationId) {
+      if (!userId) {
+        return NextResponse.json(
+          { success: false, error: 'User ID is required to delete organization documents' },
+          { status: 401 }
+        )
+      }
+      const role = await getUserOrgRole(userId, doc.organizationId)
+      if (!role) {
+        return NextResponse.json(
+          { success: false, error: 'You are not a member of this organization' },
+          { status: 403 }
+        )
+      }
+      if (!CAN_DELETE_ROLES.has(role)) {
+        return NextResponse.json(
+          { success: false, error: 'Only admins can delete documents in this organization' },
+          { status: 403 }
+        )
+      }
+    } else {
+      // Personal document — only the author can delete
+      if (!userId || userId !== doc.authorId) {
+        return NextResponse.json(
+          { success: false, error: 'Only the author can delete this document' },
+          { status: 403 }
+        )
+      }
     }
 
     // Delete change tracks first (avoid foreign key issues), then delete the document

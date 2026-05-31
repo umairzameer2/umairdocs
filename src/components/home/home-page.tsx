@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { signOut } from 'next-auth/react'
 import { useAppStore } from '@/store/app-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -937,7 +936,7 @@ function formatDate(dateStr: string) {
 }
 
 export function HomePage() {
-  const { user, documents, orgDocuments, activeOrgId, recentDocViewMode, setRecentDocViewMode, logout, createDocument, fetchDocuments, setCurrentView, setActiveDocumentId, deleteDocument, updateDocument, avatarVersion, pendingInvitations, dismissPendingInvitation, fetchOrganizations } = useAppStore()
+  const { user, documents, orgDocuments, activeOrgId, organizations, recentDocViewMode, setRecentDocViewMode, logout, createDocument, fetchDocuments, setCurrentView, setActiveDocumentId, deleteDocument, updateDocument, avatarVersion, pendingInvitations, dismissPendingInvitation, fetchOrganizations } = useAppStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [creatingDoc, setCreatingDoc] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -1031,6 +1030,16 @@ export function HomePage() {
       })
     }
   }
+
+  // ─── Role-based access control ────────────────────────────────
+  // Determine the current user's role in the active organization
+  const activeOrg = organizations.find((o) => o.id === activeOrgId) || null
+  const userOrgRole = activeOrg?.role ?? null // 'admin', 'member', 'viewer', or null (personal)
+
+  // Permission flags — personal docs always allow everything
+  const canCreate = !activeOrgId || ['admin', 'member'].includes(userOrgRole || '')
+  const canStar = !activeOrgId || ['admin', 'member'].includes(userOrgRole || '')
+  const canDelete = !activeOrgId || userOrgRole === 'admin'
 
   // Use the correct document list based on active org context
   const allDocs = activeOrgId ? orgDocuments : documents
@@ -1131,9 +1140,8 @@ export function HomePage() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     className="cursor-pointer py-2 text-red-600 focus:text-red-600 focus:bg-red-50"
-                    onClick={async () => {
+                    onClick={() => {
                       logout()
-                      await signOut({ redirect: false })
                       toast({ title: 'Signed out', description: 'You have been signed out successfully' })
                     }}
                   >
@@ -1228,7 +1236,8 @@ export function HomePage() {
           />
         )}
 
-        {/* Start a New Document Section - Horizontal Carousel */}
+        {/* Start a New Document Section - Horizontal Carousel (hidden for viewers) */}
+        {canCreate && (
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1315,6 +1324,7 @@ export function HomePage() {
             <div className="absolute right-0 top-0 bottom-2 w-8 bg-gradient-to-l from-background to-transparent pointer-events-none z-10" />
           </div>
         </motion.section>
+        )}
 
         {/* Recent Documents Section */}
         <motion.section
@@ -1381,7 +1391,10 @@ export function HomePage() {
                 <FileText className="w-8 h-8 text-muted-foreground" />
               </div>
               <h3 className="text-foreground font-medium mb-1">No documents yet</h3>
-              <p className="text-muted-foreground text-sm mb-4">Create your first document to get started</p>
+              <p className="text-muted-foreground text-sm mb-4">
+                {canCreate ? 'Create your first document to get started' : 'No documents have been shared with you yet'}
+              </p>
+              {canCreate && (
               <Button
                 onClick={() => handleCreateDocument('blank', 'Untitled Document', '📄')}
                 className="bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white shadow-lg shadow-purple-200"
@@ -1389,6 +1402,7 @@ export function HomePage() {
                 <Plus className="w-4 h-4 mr-2" />
                 New Document
               </Button>
+              )}
             </motion.div>
           ) : recentDocViewMode === 'grid' ? (
             /* Grid View with Thumbnails */
@@ -1415,6 +1429,8 @@ export function HomePage() {
                             {/* Hover overlay */}
                             <div className="absolute inset-0 bg-purple-600/0 group-hover:bg-purple-600/10 transition-colors duration-200 flex items-center justify-center">
                               <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center gap-1.5">
+                                {/* Star toggle — hidden for viewers */}
+                                {canStar && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1423,6 +1439,7 @@ export function HomePage() {
                                 >
                                   <Star className={`w-4 h-4 ${doc.isStarred ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground'}`} />
                                 </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1447,10 +1464,16 @@ export function HomePage() {
                                       <Edit3 className="w-4 h-4 mr-2" />
                                       Open in editor
                                     </DropdownMenuItem>
+                                    {/* Star option — hidden for viewers */}
+                                    {canStar && (
                                     <DropdownMenuItem onClick={() => handleToggleStar(doc.id, doc.isStarred)}>
                                       <Star className="w-4 h-4 mr-2" />
                                       {doc.isStarred ? 'Remove star' : 'Add star'}
                                     </DropdownMenuItem>
+                                    )}
+                                    {/* Delete option — hidden for non-admins in org */}
+                                    {canDelete && (
+                                    <>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
                                       className="text-red-600 focus:text-red-600 focus:bg-red-50"
@@ -1459,12 +1482,14 @@ export function HomePage() {
                                       <Trash2 className="w-4 h-4 mr-2" />
                                       Delete
                                     </DropdownMenuItem>
+                                    </>
+                                    )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </div>
                             </div>
-                            {/* Star badge */}
-                            {doc.isStarred && (
+                            {/* Star badge — hidden for viewers */}
+                            {canStar && doc.isStarred && (
                               <div className="absolute top-1.5 right-1.5 opacity-100 group-hover:opacity-0 transition-opacity">
                                 <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 drop-shadow-sm" />
                               </div>
@@ -1523,7 +1548,8 @@ export function HomePage() {
                           {formatDate(doc.updatedAt)}
                         </p>
                       </div>
-                      {doc.isStarred && (
+                      {/* Star icon — hidden for viewers */}
+                      {canStar && doc.isStarred && (
                         <Star className="w-4 h-4 fill-amber-400 text-amber-400 flex-shrink-0" />
                       )}
                     </div>
@@ -1540,6 +1566,8 @@ export function HomePage() {
 
                     {/* Actions */}
                     <div className="col-span-2 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                      {/* Star toggle — hidden for viewers */}
+                      {canStar && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -1548,6 +1576,7 @@ export function HomePage() {
                       >
                         <Star className={`w-4 h-4 ${doc.isStarred ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground'}`} />
                       </Button>
+                      )}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -1563,10 +1592,16 @@ export function HomePage() {
                             <Edit3 className="w-4 h-4 mr-2" />
                             Open in editor
                           </DropdownMenuItem>
+                          {/* Star option — hidden for viewers */}
+                          {canStar && (
                           <DropdownMenuItem onClick={() => handleToggleStar(doc.id, doc.isStarred)}>
                             <Star className="w-4 h-4 mr-2" />
                             {doc.isStarred ? 'Remove star' : 'Add star'}
                           </DropdownMenuItem>
+                          )}
+                          {/* Delete option — hidden for non-admins in org */}
+                          {canDelete && (
+                          <>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-red-600 focus:text-red-600 focus:bg-red-50"
@@ -1575,6 +1610,8 @@ export function HomePage() {
                             <Trash2 className="w-4 h-4 mr-2" />
                             Delete
                           </DropdownMenuItem>
+                          </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
