@@ -332,6 +332,7 @@ export const useAppStore = create<AppState>()(
           documentChanges: [],
           orgChanges: [],
         })
+        try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
       },
 
       setCurrentView: (currentView) => set({ currentView }),
