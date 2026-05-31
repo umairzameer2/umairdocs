@@ -4,25 +4,24 @@ import { NextRequest, NextResponse } from 'next/server'
 // Uses z-ai-web-dev-sdk by default (no API key needed).
 // Optionally configure OpenAI-compatible API for custom models:
 //   AI_API_KEY=your-api-key-here
-//   AI_BASE_URL=https://api.openai.com/v1  (or https://api.groq.com/openai/v1 for Groq)
-//   AI_MODEL=gpt-4o-mini  (or llama-3.1-8b-instant for Groq)
+//   AI_BASE_URL=https://api.openai.com/v1
+//   AI_MODEL=gpt-4o-mini
 // ───────────────────────────────────────────────────────────────────
 
-const AI_API_KEY = process.env.AI_API_KEY || ''
-const AI_BASE_URL = process.env.AI_BASE_URL || 'https://api.openai.com/v1'
-const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini'
-const USE_SDK = !AI_API_KEY // Use z-ai-web-dev-sdk when no API key is configured
+const AI_API_KEY = (process.env.AI_API_KEY || '').trim()
+const AI_BASE_URL = (process.env.AI_BASE_URL || 'https://api.openai.com/v1').trim()
+const AI_MODEL = (process.env.AI_MODEL || 'gpt-4o-mini').trim()
+const USE_SDK = !AI_API_KEY
 
-// In-memory conversation store with TTL for memory management
+// In-memory conversation store
 interface ConversationEntry {
   messages: Array<{ role: string; content: string }>
   lastAccessed: number
 }
 const conversations = new Map<string, ConversationEntry>()
 const MAX_CONVERSATIONS = 500
-const CONVERSATION_TTL = 2 * 60 * 60 * 1000 // 2 hours
+const CONVERSATION_TTL = 2 * 60 * 60 * 1000
 
-// Clean up expired conversations periodically
 function cleanupConversations() {
   const now = Date.now()
   for (const [key, entry] of conversations) {
@@ -39,7 +38,6 @@ function cleanupConversations() {
   }
 }
 
-// Run cleanup every 5 minutes
 if (typeof setInterval !== 'undefined') {
   setInterval(cleanupConversations, 5 * 60 * 1000)
 }
@@ -63,11 +61,7 @@ const SYSTEM_PROMPT = `You are UmairDocs AI Assistant — a friendly, knowledgea
 ## Academic Integrity
 - Help students understand concepts and learn, NOT cheat on assignments
 - Guide students toward finding answers themselves when appropriate
-- When summarizing multiple answers, highlight key takeaways and common themes
 - Always explain the reasoning behind answers, not just the final result
-
-## Document Context
-When document context is provided, reference the student's work to give relevant, contextual help. You can suggest improvements, explain concepts within their document's topic, or help refine their writing.
 
 ## Response Format
 - Use \`##\` for section headers, \`-\` for bullet points, \`1.\` for numbered steps
@@ -76,7 +70,6 @@ When document context is provided, reference the student's work to give relevant
 - Keep paragraphs short (2-3 sentences max)`
 
 // ─── Cached ZAI instance ──────────────────────────────────────────
-// Create the SDK instance once and reuse it across requests.
 let zaiInstance: Awaited<ReturnType<typeof import('z-ai-web-dev-sdk').default>> | null = null
 let zaiInitPromise: Promise<typeof zaiInstance> | null = null
 
@@ -92,7 +85,7 @@ async function getZAIInstance() {
       return instance
     } catch (err) {
       console.error('Failed to initialize z-ai-web-dev-sdk:', err)
-      zaiInitPromise = null // Allow retry on next request
+      zaiInitPromise = null
       throw new Error('SDK initialization failed')
     }
   })()
@@ -100,7 +93,6 @@ async function getZAIInstance() {
   return zaiInitPromise
 }
 
-// ─── Timeout wrapper ──────────────────────────────────────────────
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
@@ -111,7 +103,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   })
 }
 
-// ─── Retry with exponential backoff ───────────────────────────────
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, baseDelay = 1000): Promise<T> {
   let lastError: unknown = null
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -129,14 +120,13 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, baseDelay = 10
   throw lastError
 }
 
-// ─── SDK-based handler (default, no API key needed) ────────────────
+// ─── SDK-based handler ─────────────────────────────────────────────
 async function handleWithSDK(
   messages: Array<{ role: string; content: string }>,
   stream: boolean
 ) {
   const zai = await getZAIInstance()
 
-  // Convert messages: the z-ai-web-dev-sdk uses 'assistant' role for system prompts
   const sdkMessages = messages.map(m => ({
     role: (m.role === 'system' ? 'assistant' : m.role) as 'assistant' | 'user',
     content: m.content,
@@ -157,19 +147,15 @@ async function handleWithSDK(
     )
   }
 
-  if (!stream) {
-    const completion = await createCompletion()
-    const response = completion.choices?.[0]?.message?.content || ''
-    return { type: 'json' as const, response }
-  }
-
-  // SDK streaming — the SDK doesn't support true streaming, so we fetch
-  // the full response then emulate SSE with chunked delivery.
   const completion = await createCompletion()
   const fullContent = completion.choices?.[0]?.message?.content || ''
 
+  if (!stream) {
+    return { type: 'json' as const, response: fullContent }
+  }
+
   const encoder = new TextEncoder()
-  const FIRST_CHUNK_SIZE = 80 // bigger initial chunk for instant feedback
+  const FIRST_CHUNK_SIZE = 80
   const CHUNK_SIZE = 20
   let offset = 0
   let isFirstChunk = true
@@ -181,12 +167,10 @@ async function handleWithSDK(
         controller.close()
         return
       }
-
       const size = isFirstChunk ? FIRST_CHUNK_SIZE : CHUNK_SIZE
       isFirstChunk = false
       const chunk = fullContent.slice(offset, offset + size)
       offset += size
-
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`))
       await new Promise((r) => setTimeout(r, 25))
     },
@@ -195,18 +179,23 @@ async function handleWithSDK(
   return { type: 'stream' as const, stream: stream$, content: fullContent }
 }
 
-// ─── OpenAI-compatible API handler (when API key is configured) ───
+// ─── OpenAI-compatible API handler ────────────────────────────────
 async function handleWithOpenAI(
   messages: Array<{ role: string; content: string }>,
   stream: boolean
 ) {
+  // Ensure API key has no invalid characters
+  const cleanKey = AI_API_KEY.replace(/[\r\n"']/g, '')
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${cleanKey}`,
+  }
+
   if (!stream) {
     const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${AI_API_KEY}`,
-      },
+      headers,
       body: JSON.stringify({
         model: AI_MODEL,
         messages,
@@ -218,7 +207,7 @@ async function handleWithOpenAI(
     if (!response.ok) {
       const errText = await response.text().catch(() => 'Unknown error')
       console.error('AI API error:', response.status, errText)
-      throw new Error(`AI API error (${response.status}). Check your API key and model name.`)
+      throw new Error(`AI API error (${response.status})`)
     }
 
     const completion = await response.json()
@@ -230,10 +219,7 @@ async function handleWithOpenAI(
   // Streaming
   const response = await fetch(`${AI_BASE_URL}/chat/completions`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${AI_API_KEY}`,
-    },
+    headers,
     body: JSON.stringify({
       model: AI_MODEL,
       messages,
@@ -246,15 +232,14 @@ async function handleWithOpenAI(
   if (!response.ok) {
     const errText = await response.text().catch(() => 'Unknown error')
     console.error('AI API error:', response.status, errText)
-    throw new Error(`AI API error (${response.status}). Check your API key and model name.`)
+    throw new Error(`AI API error (${response.status})`)
   }
 
-  if (!response.body) throw new Error('No response body from AI API')
+  if (!response.body) throw new Error('No response body')
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
-
   let fullContent = ''
   let sseBuffer = ''
 
@@ -262,24 +247,7 @@ async function handleWithOpenAI(
     async pull(controller) {
       try {
         const { done, value } = await reader.read()
-
         if (done) {
-          if (sseBuffer.trim()) {
-            const remaining = sseBuffer.trim()
-            if (remaining.startsWith('data: ')) {
-              const data = remaining.slice(6).trim()
-              if (data && data !== '[DONE]') {
-                try {
-                  const parsed = JSON.parse(data)
-                  const delta = parsed.choices?.[0]?.delta?.content
-                  if (delta) {
-                    fullContent += delta
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`))
-                  }
-                } catch { /* ignore incomplete JSON */ }
-              }
-            }
-          }
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
           controller.close()
           return
@@ -292,7 +260,6 @@ async function handleWithOpenAI(
         for (const line of lines) {
           const trimmed = line.trim()
           if (!trimmed || !trimmed.startsWith('data: ')) continue
-
           const data = trimmed.slice(6).trim()
           if (!data || data === '[DONE]') continue
 
@@ -303,9 +270,7 @@ async function handleWithOpenAI(
               fullContent += delta
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`))
             }
-          } catch {
-            // Incomplete JSON — will be completed in next chunk
-          }
+          } catch { /* ignore */ }
         }
       } catch (err) {
         console.error('Stream read error:', err)
@@ -333,31 +298,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Message too long (max 4000 characters)' }, { status: 400 })
     }
 
-    // Get or create conversation history
     const sessionKey = sessionId || 'default'
     let entry = conversations.get(sessionKey)
 
-    // Build the system message with current document context
     const systemContent = documentContext
       ? `${SYSTEM_PROMPT}\n\n## Current Document Context\nThe student is currently working on the following document. Use this to provide contextual help:\n\n${documentContext}`
       : SYSTEM_PROMPT
 
     if (!entry) {
       entry = {
-        messages: [{ role: 'assistant', content: systemContent }],
+        messages: [{ role: 'system', content: systemContent }],
         lastAccessed: Date.now(),
       }
     } else {
-      entry.messages[0] = { role: 'assistant', content: systemContent }
+      entry.messages[0] = { role: 'system', content: systemContent }
       entry.lastAccessed = Date.now()
     }
 
     const history = entry.messages
-
-    // Add user message
     history.push({ role: 'user', content: message })
 
-    // Keep conversation manageable (system prompt + last 20 messages)
     if (history.length > 22) {
       const systemMsg = history[0]
       const recentMessages = history.slice(-21)
@@ -366,7 +326,6 @@ export async function POST(request: NextRequest) {
 
     const shouldStream = useStream !== false
 
-    // Route to appropriate handler
     let result: Awaited<ReturnType<typeof handleWithSDK> | ReturnType<typeof handleWithOpenAI>>
 
     if (USE_SDK) {
@@ -387,7 +346,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Streaming: return SSE response
+    // Streaming response
     const entryRef = entry
     const sessionKeyRef = sessionKey
     const capturedContent = result.content
@@ -413,7 +372,6 @@ export async function POST(request: NextRequest) {
 
           if (!USE_SDK) {
             const text = new TextDecoder().decode(value)
-            // Parse all content chunks in this value (may contain multiple data: lines)
             const lines = text.split('\n')
             for (const line of lines) {
               const trimmed = line.trim()
@@ -432,7 +390,6 @@ export async function POST(request: NextRequest) {
           controller.enqueue(value)
         } catch (err) {
           console.error('Wrapped stream error:', err)
-          // Still try to save whatever we have
           const contentToSave = USE_SDK ? capturedContent : fullStreamedContent
           if (contentToSave) {
             entryRef.messages.push({ role: 'assistant', content: contentToSave })
@@ -462,7 +419,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ─── Delete conversation ───────────────────────────────────────────
 export async function DELETE(request: NextRequest) {
   try {
     const { sessionId } = await request.json()
