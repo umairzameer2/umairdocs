@@ -319,7 +319,19 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-            logout: () => {
+      logout: () => {
+        if (typeof window !== 'undefined') {
+          // 1. Remove persisted state from localStorage FIRST
+          //    (before any set() call that would trigger persist middleware to re-write)
+          try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
+          // 2. Also clear any other app keys that might hold stale state
+          try { localStorage.clear() } catch { /* ignore */ }
+          // 3. Force full page reload — Zustand will initialize with default state
+          //    (no localStorage = defaults: user=null, isAuthenticated=false, currentView='auth')
+          window.location.href = '/'
+          return // Don't call set() — the reload handles everything
+        }
+        // Fallback for SSR or non-browser environments
         set({
           user: null,
           isAuthenticated: false,
@@ -333,10 +345,6 @@ export const useAppStore = create<AppState>()(
           orgChanges: [],
           pendingInvitations: [],
         })
-        try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
-        if (typeof window !== 'undefined') {
-          window.location.replace('/')
-        }
       },
 
       setCurrentView: (currentView) => set({ currentView }),
@@ -932,20 +940,10 @@ export const useAppStore = create<AppState>()(
           const res = await fetch(`/api/settings/delete-account?userId=${user.id}&confirmation=DELETE_ACCOUNT`, { method: 'DELETE' })
           const data = await res.json()
           if (res.ok && data.success) {
-            // Reset all state
-            set({
-              user: null, isAuthenticated: false, currentView: 'auth', activeDocumentId: null,
-              documents: [], organizations: [], activeOrgId: null, orgDocuments: [],
-              documentChanges: [], orgChanges: [], userEmails: [], userSessions: [],
-              avatarVersion: 0,
-            })
-            // Clear persisted storage to prevent state restoration
+            // Clear localStorage and reload (same robust approach as logout)
             if (typeof window !== 'undefined') {
-              try {
-                localStorage.removeItem('umairdocs-storage')
-              } catch (e) {
-                console.error('Failed to clear localStorage:', e)
-              }
+              try { localStorage.clear() } catch { /* ignore */ }
+              window.location.href = '/'
             }
             return true
           }
@@ -964,15 +962,10 @@ export const useAppStore = create<AppState>()(
           const res = await fetch(`/api/auth/verify?userId=${user.id}`)
           const data = await res.json()
           if (!data.success || !data.valid) {
-            // User no longer exists in database, clear stale session
-            set({
-              user: null, isAuthenticated: false, currentView: 'auth',
-              activeDocumentId: null, documents: [], organizations: [],
-              activeOrgId: null, orgDocuments: [], documentChanges: [],
-              orgChanges: [], userEmails: [], userSessions: [], avatarVersion: 0,
-            })
+            // User no longer exists in database, clear stale session and reload
             if (typeof window !== 'undefined') {
-              try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
+              try { localStorage.clear() } catch { /* ignore */ }
+              window.location.href = '/'
             }
             return false
           }
