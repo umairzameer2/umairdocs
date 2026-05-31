@@ -320,6 +320,8 @@ export const useAppStore = create<AppState>()(
       },
 
       logout: () => {
+        // Clear persisted localStorage so user doesn't get auto-logged back in
+        try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
         set({
           user: null,
           isAuthenticated: false,
@@ -331,8 +333,12 @@ export const useAppStore = create<AppState>()(
           orgDocuments: [],
           documentChanges: [],
           orgChanges: [],
+          pendingInvitations: [],
         })
-        try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
+        // Force full page reload to clear any cached state
+        if (typeof window !== 'undefined') {
+          window.location.href = '/'
+        }
       },
 
       setCurrentView: (currentView) => set({ currentView }),
