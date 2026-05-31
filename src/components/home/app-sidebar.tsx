@@ -289,9 +289,8 @@ export function AppSidebar() {
     [updateOrgMemberRole, fetchOrganizations],
   )
 
-  const handleSignOut = useCallback(() => {
+   const handleSignOut = useCallback(() => {
     logout()
-    toast({ title: 'Signed out', description: 'You have been signed out successfully' })
   }, [logout])
 
   const handleDeleteOrg = useCallback(async () => {

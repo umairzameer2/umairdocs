@@ -319,9 +319,7 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      logout: () => {
-        // Clear persisted localStorage so user doesn't get auto-logged back in
-        try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
+            logout: () => {
         set({
           user: null,
           isAuthenticated: false,
@@ -335,9 +333,9 @@ export const useAppStore = create<AppState>()(
           orgChanges: [],
           pendingInvitations: [],
         })
-        // Force full page reload to clear any cached state
+        try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
         if (typeof window !== 'undefined') {
-          window.location.href = '/'
+          window.location.replace('/')
         }
       },
 
