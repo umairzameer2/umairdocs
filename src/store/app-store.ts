@@ -320,18 +320,9 @@ export const useAppStore = create<AppState>()(
       },
 
       logout: () => {
-        if (typeof window !== 'undefined') {
-          // 1. Remove persisted state from localStorage FIRST
-          //    (before any set() call that would trigger persist middleware to re-write)
-          try { localStorage.removeItem('umairdocs-storage') } catch { /* ignore */ }
-          // 2. Also clear any other app keys that might hold stale state
-          try { localStorage.clear() } catch { /* ignore */ }
-          // 3. Force full page reload — Zustand will initialize with default state
-          //    (no localStorage = defaults: user=null, isAuthenticated=false, currentView='auth')
-          window.location.href = '/'
-          return // Don't call set() — the reload handles everything
-        }
-        // Fallback for SSR or non-browser environments
+        // Simply reset all state — persist middleware will save the logged-out state
+        // DO NOT call localStorage.clear() or window.location.href — those cause
+        // race conditions where React re-writes the old state before the page unloads
         set({
           user: null,
           isAuthenticated: false,
@@ -345,6 +336,8 @@ export const useAppStore = create<AppState>()(
           orgChanges: [],
           pendingInvitations: [],
         })
+        // Invalidate all caches so fresh data is fetched on next login
+        invalidateCache()
       },
 
       setCurrentView: (currentView) => set({ currentView }),
@@ -940,11 +933,9 @@ export const useAppStore = create<AppState>()(
           const res = await fetch(`/api/settings/delete-account?userId=${user.id}&confirmation=DELETE_ACCOUNT`, { method: 'DELETE' })
           const data = await res.json()
           if (res.ok && data.success) {
-            // Clear localStorage and reload (same robust approach as logout)
-            if (typeof window !== 'undefined') {
-              try { localStorage.clear() } catch { /* ignore */ }
-              window.location.href = '/'
-            }
+            // Use the logout function which properly resets state
+            const { logout } = get()
+            logout()
             return true
           }
           console.error('Delete account failed:', data.error, 'Status:', res.status)
@@ -955,16 +946,18 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-            verifySession: async () => {
+      verifySession: async () => {
         const { user } = get()
         if (!user) return false
         try {
           const res = await fetch(`/api/auth/verify?userId=${user.id}`)
-          if (!res.ok) return true
+          if (!res.ok) return true // Network error — assume valid
           const data = await res.json()
+          // Only return the result — do NOT modify state here
+          // (state changes from verifySession caused infinite loops)
           return !!(data.success && data.valid)
         } catch {
-          return true
+          return true // Network error — assume session is valid
         }
       },
     }),
