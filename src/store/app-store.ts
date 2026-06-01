@@ -172,7 +172,7 @@ interface AppState {
   login: (email: string, password: string) => Promise<boolean>
   signup: (email: string, password: string, name: string) => Promise<boolean>
   googleLogin: (email: string, name: string) => Promise<boolean>
-  logout: () => void
+  logout: () => Promise<void>
 
   // Actions - Navigation
   setCurrentView: (view: View) => void
@@ -319,10 +319,15 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      logout: () => {
-        // 1. Clear server-side session (NextAuth cookies) asynchronously
-        //    This prevents auto sign-in from persistent session cookies
-        fetch('/api/auth/signout', { method: 'POST' }).catch(() => {})
+      logout: async () => {
+        // 1. Await server-side session cleanup (NextAuth cookies)
+        //    MUST complete before clearing client state to prevent
+        //    NextAuth from auto-re-authenticating the user
+        try {
+          await fetch('/api/auth/signout', { method: 'POST' })
+        } catch {
+          // Continue even if signout API fails
+        }
 
         // 2. Reset all client-side state — persist middleware saves logged-out state
         set({
@@ -341,6 +346,30 @@ export const useAppStore = create<AppState>()(
 
         // 3. Invalidate all caches so fresh data is fetched on next login
         invalidateCache()
+
+        // 4. Clear Google Account Picker saved accounts from localStorage
+        //    This prevents the picker from offering the old account
+        try {
+          localStorage.removeItem('umairdocs-google-accounts')
+        } catch {
+          // Silently fail
+        }
+
+        // 5. Prevent browser Credential Management API from auto-signing in
+        try {
+          if (navigator.credentials && typeof navigator.credentials.preventSilentAccess === 'function') {
+            await navigator.credentials.preventSilentAccess()
+          }
+        } catch {
+          // Silently fail
+        }
+
+        // 6. Hard page reload to ensure clean state
+        //    This prevents any stale React state, NextAuth sessions,
+        //    or Zustand hydration issues from auto-signing in the user
+        if (typeof window !== 'undefined') {
+          window.location.href = '/'
+        }
       },
 
       setCurrentView: (currentView) => set({ currentView }),

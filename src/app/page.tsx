@@ -26,8 +26,37 @@ function getInvitationTokenFromURL(): string | null {
 }
 
 export default function UmairDocsApp() {
-  const { currentView, isAuthenticated, fetchPendingInvitations } = useAppStore()
+  const { currentView, isAuthenticated, fetchPendingInvitations, verifySession, user } = useAppStore()
   const [invitationToken, setInvitationToken] = useState(() => getInvitationTokenFromURL())
+
+  // Validate persisted session on mount — if the user's session is
+  // invalid (e.g., user deleted from DB), force logout
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      verifySession().then((valid) => {
+        if (!valid) {
+          // Session is invalid — clear the persisted auth state
+          useAppStore.setState({
+            user: null,
+            isAuthenticated: false,
+            currentView: 'auth',
+            activeDocumentId: null,
+            documents: [],
+            organizations: [],
+            activeOrgId: null,
+            orgDocuments: [],
+            documentChanges: [],
+            orgChanges: [],
+            pendingInvitations: [],
+          })
+          try {
+            localStorage.removeItem('umairdocs-google-accounts')
+          } catch { /* ignore */ }
+        }
+      })
+    }
+    // Only run ONCE on mount — do NOT add dependencies that change
+  }, [])
 
   // Fetch pending invitations when the user is authenticated
   useEffect(() => {

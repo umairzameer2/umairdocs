@@ -289,8 +289,8 @@ export function AppSidebar() {
     [updateOrgMemberRole, fetchOrganizations],
   )
 
-   const handleSignOut = useCallback(() => {
-    logout()
+  const handleSignOut = useCallback(async () => {
+    await logout()
   }, [logout])
 
   const handleDeleteOrg = useCallback(async () => {
