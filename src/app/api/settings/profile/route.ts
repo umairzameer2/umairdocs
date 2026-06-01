@@ -32,6 +32,12 @@ export async function PATCH(request: NextRequest) {
     if (name !== undefined) updateData.name = name
     if (avatar !== undefined) updateData.avatar = avatar
 
+    // Check if user exists first to avoid Prisma P2025 error
+    const existingUser = await db.user.findUnique({ where: { id: userId } })
+    if (!existingUser) {
+      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
+    }
+
     const user = await db.user.update({
       where: { id: userId },
       data: updateData,
@@ -57,6 +63,11 @@ export async function DELETE(request: NextRequest) {
     if (!userId) return NextResponse.json({ success: false, error: 'User ID required' }, { status: 400 })
 
     if (field === 'avatar') {
+      const existingUser = await db.user.findUnique({ where: { id: userId } })
+      if (!existingUser) {
+        return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
+      }
+
       const user = await db.user.update({
         where: { id: userId },
         data: { avatar: null },
