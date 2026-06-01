@@ -320,9 +320,11 @@ export const useAppStore = create<AppState>()(
       },
 
       logout: () => {
-        // Simply reset all state — persist middleware will save the logged-out state
-        // DO NOT call localStorage.clear() or window.location.href — those cause
-        // race conditions where React re-writes the old state before the page unloads
+        // 1. Clear server-side session (NextAuth cookies) asynchronously
+        //    This prevents auto sign-in from persistent session cookies
+        fetch('/api/auth/signout', { method: 'POST' }).catch(() => {})
+
+        // 2. Reset all client-side state — persist middleware saves logged-out state
         set({
           user: null,
           isAuthenticated: false,
@@ -336,7 +338,8 @@ export const useAppStore = create<AppState>()(
           orgChanges: [],
           pendingInvitations: [],
         })
-        // Invalidate all caches so fresh data is fetched on next login
+
+        // 3. Invalidate all caches so fresh data is fetched on next login
         invalidateCache()
       },
 

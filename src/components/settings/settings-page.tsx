@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Cropper from 'react-easy-crop'
 import 'react-easy-crop/react-easy-crop.css'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -58,9 +58,6 @@ import {
   Send,
   AlertCircle,
   CheckCircle2,
-  ShieldCheck,
-  ShieldAlert,
-  ShieldX,
 } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 
@@ -75,58 +72,6 @@ function getDeviceIcon(type: string) {
     case 'tablet': return <Tablet className="w-4 h-4" />
     default: return <Monitor className="w-4 h-4" />
   }
-}
-
-// ─── Password Strength Utility ────────────────────────────────────
-function getPasswordStrength(password: string): {
-  score: number // 0-4
-  label: string
-  color: string
-  bgColor: string
-  icon: typeof ShieldX
-} {
-  if (!password) return { score: 0, label: '', color: '', bgColor: '', icon: ShieldX }
-
-  let score = 0
-  if (password.length >= 6) score++
-  if (password.length >= 8) score++
-  if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++
-  if (/[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) score++
-
-  const levels = [
-    { label: 'Too short', color: 'text-red-500', bgColor: 'bg-red-500', icon: ShieldX },
-    { label: 'Weak', color: 'text-red-500', bgColor: 'bg-red-500', icon: ShieldAlert },
-    { label: 'Fair', color: 'text-amber-500', bgColor: 'bg-amber-500', icon: ShieldAlert },
-    { label: 'Good', color: 'text-blue-500', bgColor: 'bg-blue-500', icon: ShieldCheck },
-    { label: 'Strong', color: 'text-green-500', bgColor: 'bg-green-500', icon: ShieldCheck },
-  ]
-
-  if (password.length < 6) return levels[0]
-  return levels[score] || levels[0]
-}
-
-function SettingsPasswordStrengthBar({ password }: { password: string }) {
-  const strength = useMemo(() => getPasswordStrength(password), [password])
-  if (!password) return null
-  const Icon = strength.icon
-  return (
-    <div className="space-y-2">
-      <div className="flex gap-1">
-        {[1, 2, 3, 4].map((level) => (
-          <div
-            key={level}
-            className={`h-1.5 flex-1 rounded-full transition-all duration-300 ${
-              level <= strength.score ? strength.bgColor : 'bg-muted'
-            }`}
-          />
-        ))}
-      </div>
-      <div className="flex items-center gap-1.5">
-        <Icon className={`w-3.5 h-3.5 ${strength.color}`} />
-        <span className={`text-xs font-medium ${strength.color}`}>{strength.label}</span>
-      </div>
-    </div>
-  )
 }
 
 function formatDateTime(dateStr: string) {
@@ -277,7 +222,6 @@ export function SettingsPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showCurrentPassword, setShowCurrentPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
   const [resetMode, setResetMode] = useState(false)
   const [resetEmail, setResetEmail] = useState('')
@@ -532,10 +476,6 @@ export function SettingsPage() {
     try {
       const success = await deleteAccount()
       if (success) {
-        // Clear all persisted state from localStorage
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('umairdocs-storage')
-        }
         toast({ title: 'Account deleted', description: 'Your account has been permanently deleted' })
       } else {
         toast({ title: 'Error', description: 'Failed to delete account. Please try again.', variant: 'destructive' })
@@ -906,43 +846,29 @@ export function SettingsPage() {
                         className="pr-10 h-10"
                       />
                       <button
-                        type="button"
                         onClick={() => setShowNewPassword(!showNewPassword)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       >
                         {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
-                    <SettingsPasswordStrengthBar password={newPassword} />
+                    {newPassword && newPassword.length < 6 && (
+                      <p className="text-xs text-amber-600">Password must be at least 6 characters</p>
+                    )}
                   </div>
 
                   <div className="grid gap-2">
                     <Label htmlFor="confirm-password" className="text-sm font-medium text-foreground">Confirm New Password</Label>
-                    <div className="relative">
-                      <Input
-                        id="confirm-password"
-                        type={showConfirmPassword ? 'text' : 'password'}
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Confirm your new password"
-                        className="pr-10 h-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
+                    <Input
+                      id="confirm-password"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm your new password"
+                      className="h-10"
+                    />
                     {confirmPassword && newPassword !== confirmPassword && (
                       <p className="text-xs text-red-500">Passwords don&apos;t match</p>
-                    )}
-                    {confirmPassword && newPassword === confirmPassword && confirmPassword.length >= 6 && (
-                      <div className="flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-                        <span className="text-xs text-green-600">Passwords match</span>
-                      </div>
                     )}
                   </div>
 
