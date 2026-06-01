@@ -15,10 +15,6 @@ declare global {
           cancel: () => void
           revoke: (hint: string, callback: (done: RevocationResponse) => void) => void
         }
-        oauth2: {
-          initTokenClient: (config: TokenClientConfig) => TokenClient
-          hasGrantedAllScopes: (tokenResponse: TokenResponse, ...scopes: string[]) => boolean
-        }
       }
     }
     onGoogleLibraryLoad?: () => void
@@ -62,20 +58,6 @@ interface GoogleRenderButtonOptions {
 interface RevocationResponse {
   successful: boolean
   error?: string
-}
-
-interface TokenClientConfig {
-  client_id: string
-  scope: string
-  callback: (response: TokenResponse) => void
-  error_callback?: (error: unknown) => void
-}
-
-interface TokenResponse {
-  access_token: string
-  token_type?: string
-  expires_in?: number
-  scope?: string
 }
 
 interface GoogleUserInfo {
@@ -163,6 +145,7 @@ export function useGoogleAuth({ onSuccess, onError }: UseGoogleAuthOptions) {
       window.google.accounts.id.initialize({
         client_id: clientId,
         callback: handleCredentialResponse,
+        auto_select: false,
         cancel_on_tap_outside: true,
         context: 'signin',
       })
